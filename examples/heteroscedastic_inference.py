@@ -16,7 +16,7 @@
 # ---
 
 # %% [markdown]
-# # Heteroscedastic inference for regression and classification
+# # Heteroscedastic Inference
 #
 # This notebook shows how to fit a heteroscedastic Gaussian processes (GPs) that
 # allows one to perform regression where there exists non-constant, or
