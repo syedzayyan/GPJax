@@ -293,13 +293,13 @@ posterior_adv = mean_prior * likelihood_adv
 # The signal requires a richer inducing set to capture its oscillations, whereas the
 # noise process can be summarised with fewer points because the burst is localised.
 z_signal = jnp.linspace(-2.0, 2.0, 30)[:, None]
-z_noise = jnp.linspace(-2.0, 2.0, 15)[:, None]
+z_noise = jnp.linspace(-2.0, 2.0, 20)[:, None]
 
 # Use VariationalGaussianInit to pass specific configurations
 q_init_f = VariationalGaussianInit(inducing_inputs=z_signal)
 q_init_g = VariationalGaussianInit(inducing_inputs=z_noise)
 
-q_adv = HeteroscedasticVariationalFamily(
+q_sparse = HeteroscedasticVariationalFamily(
     posterior=posterior_adv,
     signal_init=q_init_f,
     noise_init=q_init_g,
@@ -315,19 +315,19 @@ q_adv = HeteroscedasticVariationalFamily(
 # Optimize
 objective_adv = lambda model, data: -gpx.objectives.heteroscedastic_elbo(model, data)
 optimiser_adv = ox.adam(1e-2)
-q_adv_trained, _ = gpx.fit(
-    model=q_adv,
+q_sparse_trained, _ = gpx.fit(
+    model=q_sparse,
     objective=objective_adv,
     train_data=data_adv,
     optim=optimiser_adv,
-    num_iters=8000,
+    num_iters=10000,
     verbose=False,
 )
 
 # %%
 # Plotting
-xtest = jnp.linspace(-2.2, 2.2, 200)[:, None]
-pred = q_adv_trained.predict(xtest)
+xtest = jnp.linspace(-2.2, 2.2, 300)[:, None]
+pred = q_sparse_trained.predict(xtest)
 
 # Unpack the named tuple
 mf = pred.mean_f
@@ -339,36 +339,41 @@ vg = pred.variance_g
 # The likelihood expects the *latent* noise distribution to compute the predictive
 # but here we can just use the transformed expected variance for plotting.
 # For accurate predictive intervals, we should use likelihood.predict.
-signal_dist, noise_dist = q_adv_trained.predict_latents(xtest)
+signal_dist, noise_dist = q_sparse_trained.predict_latents(xtest)
 predictive_dist = likelihood_adv.predict(signal_dist, noise_dist)
 predictive_mean = predictive_dist.mean
 predictive_std = jnp.sqrt(jnp.diag(predictive_dist.covariance_matrix))
 
-fig, ax = plt.subplots()
-ax.plot(x, y, "o", color="black", alpha=0.3, label="Data")
-ax.plot(xtest, mf, color="C0", label="Signal Mean")
-ax.fill_between(
-    xtest.squeeze(),
-    mf.squeeze() - 2 * jnp.sqrt(vf.squeeze()),
-    mf.squeeze() + 2 * jnp.sqrt(vf.squeeze()),
-    color="C0",
-    alpha=0.2,
-    label="Signal Uncertainty",
-)
+fig, ax = plt.subplots(figsize=(6, 2.5))
+ax.plot(x, y, "x", color="black", alpha=0.5, label="Data")
 
 # Plot total uncertainty (signal + noise)
-ax.plot(xtest, predictive_mean, "--", color="C1", alpha=0.5)
+ax.plot(xtest, predictive_mean, "--", color=cols[1], linewidth=2)
+ax.fill_between(
+    xtest.squeeze(),
+    predictive_mean - predictive_std,
+    predictive_mean + predictive_std,
+    color=cols[1],
+    alpha=0.3,
+    label="One std. dev.",
+)
+ax.plot(xtest.squeeze(), predictive_mean - predictive_std, "--", color=cols[1], alpha=0.5, linewidth=0.75)
+ax.plot(xtest.squeeze(), predictive_mean + predictive_std, "--", color=cols[1], alpha=0.5, linewidth=0.75)
 ax.fill_between(
     xtest.squeeze(),
     predictive_mean - 2 * predictive_std,
     predictive_mean + 2 * predictive_std,
-    color="C1",
+    color=cols[1],
     alpha=0.1,
-    label="Predictive Uncertainty (95%)",
+    label="Two std. dev.",
 )
+ax.plot(xtest.squeeze(), predictive_mean - 2 * predictive_std, "--", color=cols[1], alpha=0.5, linewidth=0.75)
+ax.plot(xtest.squeeze(), predictive_mean + 2 * predictive_std, "--", color=cols[1], alpha=0.5, linewidth=0.75)
 
-ax.set_title("Heteroscedastic Regression with Custom Inducing Points")
-ax.legend(loc="upper left", fontsize="small")
+ax.set_title("Sparse Heteroscedastic Regression")
+ax.legend(loc="best", fontsize="small")
+ax.set_xlabel("$x$")
+ax.set_ylabel("$y$")
 
 # %% [markdown]
 # ## Takeaways
