@@ -7,7 +7,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.19.1
 #   kernelspec:
 #     display_name: .venv
 #     language: python
@@ -153,7 +153,7 @@ prior = gpx.gps.Prior(mean_function=meanf, kernel=kernel)
 # ## Constructing the posterior
 #
 # Having defined our GP, we proceed to define a description of our data
-# $\mathcal{D}$ conditional on our knowledge of $f(\cdot)$ --- this is exactly the
+# $\mathcal{D}$ conditional on our knowledge of $f(\cdot)$ - this is exactly the
 # notion of a likelihood function $p(\mathcal{D} | f(\cdot))$. While the choice of
 # likelihood is a critical in Bayesian modelling, for simplicity we consider a
 # Gaussian with noise parameter $\alpha$
