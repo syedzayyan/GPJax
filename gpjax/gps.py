@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-# from __future__ import annotations
 
 from abc import abstractmethod
 from typing import Literal
@@ -94,14 +93,13 @@ class AbstractPrior(nnx.Module, tp.Generic[M, K]):
     ) -> GaussianDistribution:
         r"""Evaluate the Gaussian process at the given points.
 
-        The output of this function is a
-        [TensorFlow probability distribution](https://www.tensorflow.org/probability/api_docs/python/tfp/substrates/jax/distributions) from which the
-        the latent function's mean and covariance can be evaluated and the distribution
-        can be sampled.
+        The output of this function is a ``GaussianDistribution`` from which
+        the latent function's mean and covariance can be evaluated and the
+        distribution can be sampled.
 
-        Under the hood, `__call__` is calling the objects `predict` method. For this
-        reasons, classes inheriting the `AbstractPrior` class, should not overwrite the
-        `__call__` method and should instead define a `predict` method.
+        Under the hood, ``__call__`` invokes the ``predict`` method. Classes
+        inheriting ``AbstractPrior`` should not overwrite ``__call__`` and
+        should instead define a ``predict`` method.
 
         Args:
             test_inputs: Input locations where the GP should be evaluated.
@@ -178,16 +176,12 @@ class Prior(AbstractPrior[M, K]):
         def __mul__(self, other: GL) -> "ConjugatePosterior[Prior[M, K], GL]": ...
 
         @tp.overload
-        def __mul__(  # noqa: F811
-            self, other: NGL
-        ) -> "NonConjugatePosterior[Prior[M, K], NGL]": ...
+        def __mul__(self, other: NGL) -> "NonConjugatePosterior[Prior[M, K], NGL]": ...
 
         @tp.overload
-        def __mul__(  # noqa: F811
-            self, other: L
-        ) -> "AbstractPosterior[Prior[M, K], L]": ...
+        def __mul__(self, other: L) -> "AbstractPosterior[Prior[M, K], L]": ...
 
-    def __mul__(self, other):  # noqa: F811
+    def __mul__(self, other):
         r"""Combine the prior with a likelihood to form a posterior distribution.
 
         The product of a prior and likelihood is proportional to the posterior
@@ -224,16 +218,12 @@ class Prior(AbstractPrior[M, K]):
         def __rmul__(self, other: GL) -> "ConjugatePosterior[Prior[M, K], GL]": ...
 
         @tp.overload
-        def __rmul__(  # noqa: F811
-            self, other: NGL
-        ) -> "NonConjugatePosterior[Prior[M, K], NGL]": ...
+        def __rmul__(self, other: NGL) -> "NonConjugatePosterior[Prior[M, K], NGL]": ...
 
         @tp.overload
-        def __rmul__(  # noqa: F811
-            self, other: L
-        ) -> "AbstractPosterior[Prior[M, K], L]": ...
+        def __rmul__(self, other: L) -> "AbstractPosterior[Prior[M, K], L]": ...
 
-    def __rmul__(self, other):  # noqa: F811
+    def __rmul__(self, other):
         r"""Combine the prior with a likelihood to form a posterior distribution.
 
         Reimplement the multiplication operator to allow for order-invariant
@@ -257,8 +247,8 @@ class Prior(AbstractPrior[M, K]):
         return_covariance_type: Literal["dense", "diagonal"] = "dense",
     ) -> GaussianDistribution:
         r"""Compute the predictive prior distribution for a given set of
-        parameters. The output of this function is a function that computes
-        a TFP distribution for a given set of inputs.
+        parameters. The output of this function is a ``GaussianDistribution``
+        for a given set of inputs.
 
         In the following example, we compute the predictive prior distribution
         and then evaluate it on the interval :math:`[0, 1]`:
@@ -349,7 +339,7 @@ class Prior(AbstractPrior[M, K]):
             >>> import gpjax as gpx
             >>> import jax.numpy as jnp
             >>> import jax.random as jr
-            >>> key = jr.PRNGKey(123)
+            >>> key = jr.key(123)
             >>>
             >>> meanf = gpx.mean_functions.Zero()
             >>> kernel = gpx.kernels.RBF(n_dims=1)
@@ -425,14 +415,13 @@ class AbstractPosterior(nnx.Module, tp.Generic[P, L]):
     ) -> GaussianDistribution:
         r"""Evaluate the Gaussian process posterior at the given points.
 
-        The output of this function is a
-        [TFP distribution](https://www.tensorflow.org/probability/api_docs/python/tfp/substrates/jax/distributions)
-        from which the the latent function's mean and covariance can be
-        evaluated and the distribution can be sampled.
+        The output of this function is a ``GaussianDistribution`` from which
+        the latent function's mean and covariance can be evaluated and the
+        distribution can be sampled.
 
-        Under the hood, `__call__` is calling the objects `predict` method. For this
-        reasons, classes inheriting the `AbstractPosterior` class, should not overwrite the
-        `__call__` method and should instead define a `predict` method.
+        Under the hood, ``__call__`` invokes the ``predict`` method. Classes
+        inheriting ``AbstractPosterior`` should not overwrite ``__call__`` and
+        should instead define a ``predict`` method.
 
         Args:
             test_inputs: Input locations where the GP should be evaluated.
@@ -597,7 +586,7 @@ class ConjugatePosterior(AbstractPosterior[P, GL]):
         x = train_data.X
         y = train_data.y
         # Observation noise o²
-        obs_noise = jnp.square(self.likelihood.obs_stddev.value)
+        obs_noise = jnp.square(self.likelihood.obs_stddev[...])
         mx = self.prior.mean_function(x)
         # Precompute Gram matrix, Kxx, at training inputs, x
         Kxx = self.prior.kernel.gram(x)
@@ -697,7 +686,7 @@ class ConjugatePosterior(AbstractPosterior[P, GL]):
 
         fourier_weights = jr.normal(key, [num_samples, 2 * num_features])
 
-        obs_var = self.likelihood.obs_stddev.value**2
+        obs_var = self.likelihood.obs_stddev[...] ** 2
         Kxx = self.prior.kernel.gram(train_data.X)
         Sigma = Dense(add_jitter(Kxx.to_dense(), obs_var + self.jitter))
         eps = jnp.sqrt(obs_var) * jr.normal(key, [train_data.n, num_samples])
@@ -748,7 +737,7 @@ class NonConjugatePosterior(AbstractPosterior[P, NGL]):
         likelihood: NGL,
         latent: tp.Union[Float[Array, "N 1"], Parameter, None] = None,
         jitter: float = 1e-6,
-        key: KeyArray = jr.PRNGKey(42),
+        key: KeyArray = jr.key(42),
     ):
         r"""Construct a non-conjugate Gaussian process posterior.
 
@@ -815,7 +804,7 @@ class NonConjugatePosterior(AbstractPosterior[P, NGL]):
 
         mean_t = mean_function(t)
         # Whitened function values, wx, corresponding to the inputs, x
-        wx = self.latent.value
+        wx = self.latent[...]
 
         # μt + Ktx Lx⁻¹ wx
         mean = mean_t + jnp.matmul(Lx_inv_Kxt.T, wx)
@@ -902,24 +891,24 @@ def construct_posterior(prior: P, likelihood: GL) -> ConjugatePosterior[P, GL]: 
 
 
 @tp.overload
-def construct_posterior(  # noqa: F811
-    prior: P, likelihood: NGL
-) -> NonConjugatePosterior[P, NGL]: ...
+def construct_posterior(prior: P, likelihood: NGL) -> NonConjugatePosterior[P, NGL]: ...
 
 
 @tp.overload
-def construct_posterior(  # noqa: F811
+def construct_posterior(
     prior: P, likelihood: HeteroscedasticGaussian
 ) -> HeteroscedasticPosterior[P, HeteroscedasticGaussian]: ...
 
 
 @tp.overload
-def construct_posterior(  # noqa: F811
+def construct_posterior(
     prior: P, likelihood: AbstractHeteroscedasticLikelihood
 ) -> ChainedPosterior[P, AbstractHeteroscedasticLikelihood]: ...
 
 
-def construct_posterior(prior, likelihood):  # noqa: F811
+def construct_posterior(
+    prior: AbstractPrior, likelihood: AbstractLikelihood
+) -> "AbstractPosterior":
     r"""Utility function for constructing a posterior object from a prior and
     likelihood. The function will automatically select the correct posterior
     object based on the likelihood.
@@ -931,9 +920,10 @@ def construct_posterior(prior, likelihood):  # noqa: F811
 
     Returns
     -------
-        AbstractPosterior: A posterior distribution. If the likelihood is
-            Gaussian, then a `ConjugatePosterior` will be returned. Otherwise,
-            a `NonConjugatePosterior` will be returned.
+    AbstractPosterior
+        A posterior distribution. If the likelihood is Gaussian, then a
+        `ConjugatePosterior` will be returned. Otherwise, a
+        `NonConjugatePosterior` will be returned.
     """
     if isinstance(likelihood, Gaussian):
         return ConjugatePosterior(prior=prior, likelihood=likelihood)
@@ -963,7 +953,8 @@ def _build_fourier_features_fn(
 
     Returns
     -------
-        Callable: A callable function evaluation the sampled feature functions.
+    Callable
+        A callable function evaluating the sampled feature functions.
     """
     if (not isinstance(num_features, int)) or num_features <= 0:
         raise ValueError("num_features must be a positive integer")
@@ -975,20 +966,20 @@ def _build_fourier_features_fn(
 
     def eval_fourier_features(test_inputs: Float[Array, "N D"]) -> Float[Array, "N L"]:
         Phi = approximate_kernel.compute_features(x=test_inputs)
-        Phi *= jnp.sqrt(prior.kernel.variance.value / num_features)
+        Phi *= jnp.sqrt(prior.kernel.variance[...] / num_features)
         return Phi
 
     return eval_fourier_features
 
 
 __all__ = [
-    "AbstractPrior",
-    "Prior",
     "AbstractPosterior",
-    "LatentPosterior",
-    "ConjugatePosterior",
-    "NonConjugatePosterior",
-    "HeteroscedasticPosterior",
+    "AbstractPrior",
     "ChainedPosterior",
+    "ConjugatePosterior",
+    "HeteroscedasticPosterior",
+    "LatentPosterior",
+    "NonConjugatePosterior",
+    "Prior",
     "construct_posterior",
 ]

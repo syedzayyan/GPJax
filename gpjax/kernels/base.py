@@ -240,7 +240,7 @@ class Constant(AbstractKernel):
         Returns:
             ScalarFloat: The evaluated kernel function at the supplied inputs.
         """
-        return self.constant.value.squeeze()
+        return self.constant[...].squeeze()
 
 
 class CombinationKernel(AbstractKernel):
@@ -309,9 +309,12 @@ def _check_dims_compat(
         f" Got {active_dims} active dimensions and {n_dims} input dimensions."
     )
 
-    if isinstance(active_dims, list) and isinstance(n_dims, int):
-        if len(active_dims) != n_dims:
-            raise err
+    if (
+        isinstance(active_dims, list)
+        and isinstance(n_dims, int)
+        and len(active_dims) != n_dims
+    ):
+        raise err
 
     if isinstance(active_dims, slice) and isinstance(n_dims, int):
         start = active_dims.start or 0
@@ -337,3 +340,11 @@ def _check_dims_compat(
 
 SumKernel = ft.partial(CombinationKernel, operator=jnp.sum)
 ProductKernel = ft.partial(CombinationKernel, operator=jnp.prod)
+
+__all__ = [
+    "AbstractKernel",
+    "CombinationKernel",
+    "Constant",
+    "ProductKernel",
+    "SumKernel",
+]

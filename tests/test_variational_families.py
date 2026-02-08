@@ -13,23 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
-from typing import (
-    Callable,
-    Tuple,
-)
-
-from jax import config
-import jax.numpy as jnp
-import jax.random as jr
-from jaxtyping import (
-    Array,
-    Float,
-)
-import networkx as nx
-import numpy as np
-import numpyro.distributions as npd
-from numpyro.distributions import Distribution as NumpyroDistribution
-import pytest
+from collections.abc import Callable
 
 import gpjax as gpx
 from gpjax.gps import AbstractPosterior
@@ -42,6 +26,18 @@ from gpjax.variational_families import (
     VariationalGaussian,
     WhitenedVariationalGaussian,
 )
+from jax import config
+import jax.numpy as jnp
+import jax.random as jr
+from jaxtyping import (
+    Array,
+    Float,
+)
+import networkx as nx
+import numpy as np
+import numpyro.distributions as npd
+from numpyro.distributions import Distribution as NumpyroDistribution
+import pytest
 
 # Enable Float64 for more stable matrix inversions.
 config.update("jax_enable_x64", True)
@@ -68,12 +64,12 @@ def test_abstract_variational_family():
 
 
 # Functions to test variational family parameter shapes upon initialisation.
-def vector_shape(n_inducing: int) -> Tuple[int, int]:
+def vector_shape(n_inducing: int) -> tuple[int, int]:
     """Shape of a vector with n_inducing rows and 1 column."""
     return (n_inducing, 1)
 
 
-def matrix_shape(n_inducing: int) -> Tuple[int, int]:
+def matrix_shape(n_inducing: int) -> tuple[int, int]:
     """Shape of a matrix with n_inducing rows and 1 column."""
     return (n_inducing, n_inducing)
 
@@ -131,33 +127,25 @@ def test_variational_gaussians(
     assert q.num_inducing == n_inducing
     assert isinstance(q, AbstractVariationalFamily)
 
-    if isinstance(q, VariationalGaussian):
-        assert q.variational_mean.value.shape == vector_shape(n_inducing)
-        assert q.variational_root_covariance.value.shape == matrix_shape(n_inducing)
-        assert (q.variational_mean.value == vector_val(0.0)(n_inducing)).all()
+    if isinstance(q, (VariationalGaussian, WhitenedVariationalGaussian)):
+        assert q.variational_mean[...].shape == vector_shape(n_inducing)
+        assert q.variational_root_covariance[...].shape == matrix_shape(n_inducing)
+        assert (q.variational_mean[...] == vector_val(0.0)(n_inducing)).all()
         assert (
-            q.variational_root_covariance.value == diag_matrix_val(1.0)(n_inducing)
-        ).all()
-
-    elif isinstance(q, WhitenedVariationalGaussian):
-        assert q.variational_mean.value.shape == vector_shape(n_inducing)
-        assert q.variational_root_covariance.value.shape == matrix_shape(n_inducing)
-        assert (q.variational_mean.value == vector_val(0.0)(n_inducing)).all()
-        assert (
-            q.variational_root_covariance.value == diag_matrix_val(1.0)(n_inducing)
+            q.variational_root_covariance[...] == diag_matrix_val(1.0)(n_inducing)
         ).all()
 
     elif isinstance(q, NaturalVariationalGaussian):
-        assert q.natural_vector.value.shape == vector_shape(n_inducing)
-        assert q.natural_matrix.value.shape == matrix_shape(n_inducing)
-        assert (q.natural_vector.value == vector_val(0.0)(n_inducing)).all()
-        assert (q.natural_matrix.value == diag_matrix_val(-0.5)(n_inducing)).all()
+        assert q.natural_vector[...].shape == vector_shape(n_inducing)
+        assert q.natural_matrix[...].shape == matrix_shape(n_inducing)
+        assert (q.natural_vector[...] == vector_val(0.0)(n_inducing)).all()
+        assert (q.natural_matrix[...] == diag_matrix_val(-0.5)(n_inducing)).all()
 
     elif isinstance(q, ExpectationVariationalGaussian):
-        assert q.expectation_vector.value.shape == vector_shape(n_inducing)
-        assert q.expectation_matrix.value.shape == matrix_shape(n_inducing)
-        assert (q.expectation_vector.value == vector_val(0.0)(n_inducing)).all()
-        assert (q.expectation_matrix.value == diag_matrix_val(1.0)(n_inducing)).all()
+        assert q.expectation_vector[...].shape == vector_shape(n_inducing)
+        assert q.expectation_matrix[...].shape == matrix_shape(n_inducing)
+        assert (q.expectation_vector[...] == vector_val(0.0)(n_inducing)).all()
+        assert (q.expectation_matrix[...] == diag_matrix_val(1.0)(n_inducing)).all()
 
     # Test KL
     kl = q.prior_kl()
@@ -270,8 +258,8 @@ def test_collapsed_variational_gaussian(
 
     # Test init
     assert variational_family.num_inducing == n_inducing
-    assert (variational_family.inducing_inputs.value == inducing_inputs).all()
-    assert variational_family.posterior.likelihood.obs_stddev.value == 1.0
+    assert (variational_family.inducing_inputs[...] == inducing_inputs).all()
+    assert variational_family.posterior.likelihood.obs_stddev[...] == 1.0
 
     # Test predictions
     predictive_dist = variational_family(test_inputs, D)

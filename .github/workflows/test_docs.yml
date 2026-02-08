@@ -13,6 +13,7 @@ jobs:
     # Functionality for testing documentation builds on multiple OSes and Python versions
     name: Build docs
     runs-on: "ubuntu-latest"
+    timeout-minutes: 30
     concurrency:
       group: ${{ github.head_ref }}
       cancel-in-progress: true
@@ -40,11 +41,12 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
+          enable-cache: true
 
       - name: Build the documentation with MKDocs
         run: |
           conda install pandoc
-          uv sync --extra docs
+          uv sync --frozen --extra docs
           uv run python docs/scripts/gen_examples.py --execute
           uv run mkdocs build
 
@@ -63,6 +65,7 @@ jobs:
     needs: test-docs
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: docs-preview
       url: ${{ steps.deployment.outputs.page_url }}

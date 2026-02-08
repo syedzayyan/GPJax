@@ -21,16 +21,7 @@ try:
 except ImportError:
     ValidationErrors = TypeError
 
-from typing import (
-    Callable,
-    Type,
-)
-
-from jax import config
-import jax.numpy as jnp
-import jax.random as jr
-from numpyro.distributions import Distribution as NumpyroDistribution
-import pytest
+from collections.abc import Callable
 
 from gpjax.dataset import Dataset
 from gpjax.distributions import GaussianDistribution
@@ -58,6 +49,11 @@ from gpjax.mean_functions import (
     Constant,
     Zero,
 )
+from jax import config
+import jax.numpy as jnp
+import jax.random as jr
+from numpyro.distributions import Distribution as NumpyroDistribution
+import pytest
 
 # Enable Float64 for more stable matrix inversions.
 config.update("jax_enable_x64", True)
@@ -81,7 +77,7 @@ def test_abstract_posterior():
 def test_prior_with_diag(
     num_datapoints: int,
     kernel: type[AbstractKernel],
-    mean_function: Type[AbstractMeanFunction],
+    mean_function: type[AbstractMeanFunction],
 ) -> None:
     # Create prior.
     prior = Prior(mean_function=mean_function(), kernel=kernel())
@@ -118,7 +114,7 @@ def test_prior_with_diag(
 def test_prior(
     num_datapoints: int,
     kernel: type[AbstractKernel],
-    mean_function: Type[AbstractMeanFunction],
+    mean_function: type[AbstractMeanFunction],
 ) -> None:
     # Create prior.
     prior = Prior(mean_function=mean_function(), kernel=kernel())
@@ -265,7 +261,7 @@ def test_nonconjugate_posterior_with_diag(
 
     # Check latent values.
     latent_values = jr.normal(posterior.key, (num_datapoints, 1))
-    assert (posterior.latent.value == latent_values).all()
+    assert (posterior.latent[...] == latent_values).all()
 
     # Query a marginal distribution of the posterior at some inputs.
     inputs = jnp.linspace(-3.0, 3.0, num_test_datapoints).reshape(-1, 1)
@@ -320,7 +316,7 @@ def test_nonconjugate_posterior(
 
     # Check latent values.
     latent_values = jr.normal(posterior.key, (num_datapoints, 1))
-    assert (posterior.latent.value == latent_values).all()
+    assert (posterior.latent[...] == latent_values).all()
 
     # Query a marginal distribution of the posterior at some inputs.
     inputs = jnp.linspace(-3.0, 3.0, num_test_datapoints).reshape(-1, 1)
@@ -342,7 +338,7 @@ def test_nonconjugate_posterior(
 @pytest.mark.parametrize("kernel", [RBF, Matern52])
 @pytest.mark.parametrize("mean_function", [Zero, Constant])
 def test_posterior_construct(
-    likelihood: Type[AbstractLikelihood],
+    likelihood: type[AbstractLikelihood],
     num_datapoints: int,
     kernel: type[AbstractKernel],
     mean_function: type[AbstractMeanFunction],
@@ -379,7 +375,7 @@ def test_posterior_construct(
 def test_prior_sample_approx(num_datapoints, kernel, mean_function):
     kern = kernel(n_dims=2, lengthscale=jnp.array([5.0, 1.0]), variance=0.1)
     p = Prior(kernel=kern, mean_function=mean_function())
-    key = jr.PRNGKey(123)
+    key = jr.key(123)
 
     with pytest.raises(ValueError):
         p.sample_approx(-1, key)

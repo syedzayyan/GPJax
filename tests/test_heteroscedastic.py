@@ -13,16 +13,6 @@
 # limitations under the License.
 # ==============================================================================
 from flax import nnx
-from hypothesis import (
-    given,
-    strategies as st,
-)
-import jax
-from jax import config
-import jax.numpy as jnp
-import jax.random as jr
-import pytest
-
 import gpjax as gpx
 from gpjax.dataset import Dataset
 from gpjax.gps import (
@@ -46,6 +36,15 @@ from gpjax.variational_families import (
     HeteroscedasticVariationalFamily,
     VariationalGaussianInit,
 )
+from hypothesis import (
+    given,
+    strategies as st,
+)
+import jax
+from jax import config
+import jax.numpy as jnp
+import jax.random as jr
+import pytest
 
 config.update("jax_enable_x64", True)
 
@@ -157,7 +156,7 @@ def test_softplus_transform_numerical_accuracy(mean: float, variance: float, see
 
     moments = transform.moments(mean_array, variance_array)
 
-    key = jr.PRNGKey(seed)
+    key = jr.key(seed)
     samples = mean_array + jnp.sqrt(variance_array) * jr.normal(key, (1000000, 1))
     transformed_samples = jax.nn.softplus(samples)
 
@@ -183,11 +182,11 @@ def test_heteroscedastic_variational_predict(prior, noise_prior, dataset):
         posterior=posterior, inducing_inputs=dataset.X, inducing_inputs_g=dataset.X[::2]
     )
 
-    mf, vf, mg, vg = variational.predict(dataset.X)
+    mf, vf, _mg, _vg = variational.predict(dataset.X)
     assert mf.shape == (dataset.n, 1)
     assert vf.shape == (dataset.n, 1)
-    assert mg.shape == (dataset.n, 1)
-    assert vg.shape == (dataset.n, 1)
+    assert _mg.shape == (dataset.n, 1)
+    assert _vg.shape == (dataset.n, 1)
 
     kl = variational.prior_kl()
     assert jnp.isfinite(kl)
@@ -224,15 +223,15 @@ def test_variational_family_init_structure(n_inducing: int, offset: float):
         posterior=posterior, signal_init=signal_init, noise_init=noise_init
     )
 
-    assert jnp.allclose(q.signal_variational.inducing_inputs.value, inducing_inputs)
-    assert jnp.allclose(q.noise_variational.inducing_inputs.value, noise_inducing)
+    assert jnp.allclose(q.signal_variational.inducing_inputs[...], inducing_inputs)
+    assert jnp.allclose(q.noise_variational.inducing_inputs[...], noise_inducing)
 
     # Test initialization inference (noise inferred from signal)
     q_inferred = HeteroscedasticVariationalFamily(
         posterior=posterior, signal_init=signal_init
     )
     assert jnp.allclose(
-        q_inferred.noise_variational.inducing_inputs.value, inducing_inputs
+        q_inferred.noise_variational.inducing_inputs[...], inducing_inputs
     )
 
 
@@ -267,7 +266,7 @@ def test_variational_family_predict_return_type(prior, noise_prior):
     assert hasattr(prediction, "variance_g")
 
     # Check backward compatibility (unpacking)
-    mf, vf, mg, vg = prediction
+    mf, _vf, _mg, _vg = prediction
     assert jnp.allclose(mf, prediction.mean_f)
 
 
@@ -305,7 +304,7 @@ def test_jit_prediction(prior, noise_prior, dataset):
 
     # JIT compile the predict method
     predict_jit = jax.jit(q.predict)
-    mf, vf, mg, vg = predict_jit(dataset.X)
+    mf, _vf, _mg, _vg = predict_jit(dataset.X)
 
     assert mf.shape == (dataset.n, 1)
     assert jnp.isfinite(mf).all()

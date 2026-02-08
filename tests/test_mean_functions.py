@@ -21,16 +21,6 @@ config.update("jax_enable_x64", True)
 
 import warnings
 
-import jax.numpy as jnp
-import jax.random as jr
-from jaxtyping import (
-    Array,
-    Float,
-    Num,
-)
-import pytest
-from scipy.optimize import OptimizeWarning
-
 import gpjax as gpx
 from gpjax.mean_functions import (
     AbstractMeanFunction,
@@ -42,6 +32,15 @@ from gpjax.parameters import (
     Parameter,
     Real,
 )
+import jax.numpy as jnp
+import jax.random as jr
+from jaxtyping import (
+    Array,
+    Float,
+    Num,
+)
+import pytest
+from scipy.optimize import OptimizeWarning
 
 
 def test_abstract() -> None:
@@ -76,7 +75,7 @@ def test_constant(constant: Float[Array, " Q"]) -> None:
 
 
 def test_zero_mean_remains_zero() -> None:
-    key = jr.PRNGKey(123)
+    key = jr.key(123)
 
     x = jr.uniform(key=key, minval=0, maxval=1, shape=(20, 1))
     y = jnp.full((20, 1), 50, dtype=jnp.float64)  # Dataset with non-zero mean
@@ -268,7 +267,7 @@ def test_constant_mean_function_with_parameter():
 
     # Check that the constant is stored as a Parameter
     assert isinstance(meanf.constant, Real)
-    assert jnp.allclose(meanf.constant.value, 2.5)
+    assert jnp.allclose(meanf.constant[...], 2.5)
 
     # Test evaluation
     x = jnp.array([[1.0], [2.0], [3.0]])

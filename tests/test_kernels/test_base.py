@@ -14,14 +14,6 @@
 # ==============================================================================
 
 from flax import nnx
-from jax import config
-import jax.numpy as jnp
-from jaxtyping import (
-    Array,
-    Float,
-)
-import pytest
-
 from gpjax.kernels.base import (
     AbstractKernel,
     CombinationKernel,
@@ -43,6 +35,13 @@ from gpjax.parameters import (
     PositiveReal,
     Real,
 )
+from jax import config
+import jax.numpy as jnp
+from jaxtyping import (
+    Array,
+    Float,
+)
+import pytest
 
 # Enable Float64 for more stable matrix inversions.
 config.update("jax_enable_x64", True)
@@ -203,12 +202,12 @@ def test_kernel_subclassing():
         def __call__(
             self, x: Float[Array, "1 D"], y: Float[Array, "1 D"]
         ) -> Float[Array, "1"]:
-            return x * self.test_b.value * y
+            return x * self.test_b[...] * y
 
     # Initialise dummy kernel class and test __call__ method:
     dummy_kernel = DummyKernel()
-    assert dummy_kernel.test_a.value == jnp.array([1.0])
-    assert dummy_kernel.test_b.value == jnp.array([2.0])
+    assert dummy_kernel.test_a[...] == jnp.array([1.0])
+    assert dummy_kernel.test_b[...] == jnp.array([2.0])
     assert dummy_kernel(jnp.array([1.0]), jnp.array([2.0])) == 4.0
 
 

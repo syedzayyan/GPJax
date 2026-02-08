@@ -41,15 +41,15 @@ from gpjax.typing import (
 Model = tp.TypeVar("Model", bound=nnx.Module)
 
 
-def fit(  # noqa: PLR0913
+def fit(
     *,
     model: Model,
     objective: Objective,
     train_data: Dataset,
     optim: ox.GradientTransformation,
-    params_bijection: tp.Union[dict[Parameter, Transform], None] = DEFAULT_BIJECTION,
+    params_bijection: dict[Parameter, Transform] | None = DEFAULT_BIJECTION,
     trainable: nnx.filterlib.Filter = Parameter,
-    key: KeyArray = jr.PRNGKey(42),
+    key: KeyArray = jr.key(42),
     num_iters: int = 100,
     batch_size: int = -1,
     log_rate: int = 10,
@@ -70,7 +70,7 @@ def fit(  # noqa: PLR0913
         >>>
         >>> # (1) Create a dataset:
         >>> X = jnp.linspace(0.0, 10.0, 100)[:, None]
-        >>> y = 2.0 * X + 1.0 + 10 * jr.normal(jr.PRNGKey(0), X.shape)
+        >>> y = 2.0 * X + 1.0 + 10 * jr.normal(jr.key(0), X.shape)
         >>> D = gpx.Dataset(X, y)
         >>> # (2) Define your model:
         >>> class LinearModel(nnx.Module):
@@ -79,7 +79,7 @@ def fit(  # noqa: PLR0913
         >>>         self.bias = bias
         >>>
         >>>     def __call__(self, x):
-        >>>         return self.weight.value * x + self.bias
+        >>>         return self.weight[...] * x + self.bias
         >>>
         >>> model = LinearModel(weight=1.0, bias=1.0)
         >>>
@@ -108,7 +108,7 @@ def fit(  # noqa: PLR0913
         batch_size (int): The size of the mini-batch to use. Defaults to -1
             (i.e. full batch).
         key (KeyArray): The random key to use for the optimisation batch
-            selection. Defaults to jr.PRNGKey(42).
+            selection. Defaults to jr.key(42).
         log_rate (int): How frequently the objective function's value should
             be printed. Defaults to 10.
         verbose (bool): Whether to print the training loading bar. Defaults
@@ -180,7 +180,7 @@ def fit(  # noqa: PLR0913
     return model, history
 
 
-def fit_scipy(  # noqa: PLR0913
+def fit_scipy(
     *,
     model: Model,
     objective: Objective,
@@ -190,21 +190,56 @@ def fit_scipy(  # noqa: PLR0913
     verbose: bool = True,
     safe: bool = True,
 ) -> tuple[Model, Array]:
-    r"""Train a Module model with respect to a supplied Objective function.
-    Optimisers used here should originate from Optax. todo
+    r"""Train a Module model with respect to a supplied Objective function
+    using SciPy's L-BFGS-B optimiser.
 
-    Args:
-        model: the model Module to be optimised.
-        objective: The objective function that we are optimising with
-            respect to.
-        train_data (Dataset): The training data to be used for the optimisation.
-        max_iters (int): The maximum number of optimisation steps to run. Defaults
-            to 500.
-        verbose (bool): Whether to print the information about the optimisation. Defaults
-            to True.
+    Parameters are transformed to unconstrained space, flattened into a
+    single vector, and passed to ``scipy.optimize.minimize``. Gradients
+    are computed via JAX's ``value_and_grad``.
 
-    Returns:
-        A tuple comprising the optimised model and training history.
+    Parameters
+    ----------
+    model : Module
+        The model to be optimised.
+    objective : Objective
+        The objective function to minimise with respect to the model
+        parameters.
+    train_data : Dataset
+        The training data used to evaluate the objective.
+    trainable : nnx.filterlib.Filter
+        Filter selecting which parameters to optimise. Defaults to all
+        ``Parameter`` instances.
+    max_iters : int
+        Maximum number of L-BFGS-B iterations. Defaults to 500.
+    verbose : bool
+        Whether to print optimisation progress. Defaults to True.
+    safe : bool
+        Whether to validate inputs before optimisation. Defaults to True.
+
+    Returns
+    -------
+    tuple[Module, Array]
+        A tuple of the optimised model and an array of objective values
+        recorded at each iteration.
+
+    Example:
+        >>> import gpjax as gpx
+        >>> import jax.numpy as jnp
+
+        >>> xtrain = jnp.linspace(0, 1).reshape(-1, 1)
+        >>> ytrain = jnp.sin(xtrain)
+        >>> D = gpx.Dataset(X=xtrain, y=ytrain)
+
+        >>> meanf = gpx.mean_functions.Constant()
+        >>> kernel = gpx.kernels.RBF()
+        >>> likelihood = gpx.likelihoods.Gaussian(num_datapoints=D.n)
+        >>> prior = gpx.gps.Prior(mean_function=meanf, kernel=kernel)
+        >>> posterior = prior * likelihood
+
+        >>> nmll = lambda p, d: -gpx.objectives.conjugate_mll(p, d)
+        >>> trained_model, history = gpx.fit_scipy(
+        ...     model=posterior, objective=nmll, train_data=D
+        ... )
     """
     if safe:
         # Check inputs.
@@ -261,7 +296,7 @@ def fit_lbfgs(
     model: Model,
     objective: Objective,
     train_data: Dataset,
-    params_bijection: tp.Union[dict[Parameter, Transform], None] = DEFAULT_BIJECTION,
+    params_bijection: dict[Parameter, Transform] | None = DEFAULT_BIJECTION,
     trainable: nnx.filterlib.Filter = Parameter,
     max_iters: int = 100,
     safe: bool = True,
@@ -270,23 +305,55 @@ def fit_lbfgs(
 ) -> tuple[Model, jax.Array]:
     r"""Train a Module model with respect to a supplied Objective function.
 
-    Uses Optax's LBFGS implementation and a jax.lax.while loop.
+    Uses Optax's L-BFGS implementation with a ``jax.lax.while_loop``.
 
-     Args:
-         model: the model Module to be optimised.
-         objective: The objective function that we are optimising with
-             respect to.
-         train_data (Dataset): The training data to be used for the optimisation.
-         max_iters (int): The maximum number of optimisation steps to run. Defaults
-             to 500.
-         safe (bool): Whether to check the types of the inputs.
-         max_linesearch_steps (int): The maximum number of linesearch steps to use
-            for finding the stepsize.
-        gtol (float): Terminate the optimisation if the L2 norm of the gradient is
-            below this threshold.
+    Parameters
+    ----------
+    model : Module
+        The model to be optimised.
+    objective : Objective
+        The objective function to minimise.
+    train_data : Dataset
+        The training data used to evaluate the objective.
+    params_bijection : dict[Parameter, Transform] | None
+        Bijection used to transform parameters to unconstrained space.
+        Defaults to ``DEFAULT_BIJECTION``.
+    trainable : nnx.filterlib.Filter
+        Filter selecting which parameters to optimise. Defaults to all
+        ``Parameter`` instances.
+    max_iters : int
+        Maximum number of L-BFGS iterations. Defaults to 100.
+    safe : bool
+        Whether to validate inputs before optimisation. Defaults to True.
+    max_linesearch_steps : int
+        Maximum number of line-search steps per iteration. Defaults to 32.
+    gtol : float
+        Terminate if the L2 norm of the gradient falls below this
+        threshold. Defaults to 1e-5.
 
-     Returns:
-         A tuple comprising the optimised model and final loss.
+    Returns
+    -------
+    tuple[Module, Array]
+        A tuple of the optimised model and the final loss value.
+
+    Example:
+        >>> import gpjax as gpx
+        >>> import jax.numpy as jnp
+
+        >>> xtrain = jnp.linspace(0, 1).reshape(-1, 1)
+        >>> ytrain = jnp.sin(xtrain)
+        >>> D = gpx.Dataset(X=xtrain, y=ytrain)
+
+        >>> meanf = gpx.mean_functions.Constant()
+        >>> kernel = gpx.kernels.RBF()
+        >>> likelihood = gpx.likelihoods.Gaussian(num_datapoints=D.n)
+        >>> prior = gpx.gps.Prior(mean_function=meanf, kernel=kernel)
+        >>> posterior = prior * likelihood
+
+        >>> nmll = lambda p, d: -gpx.objectives.conjugate_mll(p, d)
+        >>> trained_model, final_loss = gpx.fit_lbfgs(
+        ...     model=posterior, objective=nmll, train_data=D
+        ... )
     """
     if safe:
         # Check inputs
@@ -369,9 +436,22 @@ def get_batch(train_data: Dataset, batch_size: int, key: KeyArray) -> Dataset:
         batch_size (int): The batch size.
         key (KeyArray): The random key to use for the batch selection.
 
+    Example:
+        >>> import gpjax as gpx
+        >>> import jax.numpy as jnp
+        >>> import jax.random as jr
+
+        >>> X = jnp.linspace(0, 1, 100).reshape(-1, 1)
+        >>> y = jnp.sin(X)
+        >>> D = gpx.Dataset(X=X, y=y)
+
+        >>> from gpjax.fit import get_batch
+        >>> batch = get_batch(D, batch_size=16, key=jr.key(0))
+
     Returns
     -------
-        Dataset: The batched dataset.
+    Dataset
+        The batched dataset.
     """
     x, y, n = train_data.X, train_data.y, train_data.n
 
@@ -455,5 +535,7 @@ def _check_batch_size(batch_size: tp.Any) -> None:
 
 __all__ = [
     "fit",
+    "fit_lbfgs",
+    "fit_scipy",
     "get_batch",
 ]

@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-import typing as tp
-
 from flax import nnx
 import jax.numpy as jnp
 from jaxtyping import Float
@@ -43,9 +41,9 @@ class White(StationaryKernel):
 
     def __init__(
         self,
-        active_dims: tp.Union[list[int], slice, None] = None,
-        variance: tp.Union[ScalarFloat, nnx.Variable[ScalarArray]] = 1.0,
-        n_dims: tp.Union[int, None] = None,
+        active_dims: list[int] | slice | None = None,
+        variance: ScalarFloat | nnx.Variable[ScalarArray] = 1.0,
+        n_dims: int | None = None,
         compute_engine: AbstractKernelComputation = ConstantDiagonalKernelComputation(),
     ):
         """Initializes the kernel.
@@ -60,5 +58,5 @@ class White(StationaryKernel):
         super().__init__(active_dims, 1.0, variance, n_dims, compute_engine)
 
     def __call__(self, x: Float[Array, " D"], y: Float[Array, " D"]) -> ScalarFloat:
-        K = jnp.all(jnp.equal(x, y)) * self.variance.value
+        K = jnp.all(jnp.equal(x, y)) * self.variance[...]
         return K.squeeze()

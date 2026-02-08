@@ -10,7 +10,7 @@ from jax.typing import ArrayLike
 import numpyro.distributions as dist
 import numpyro.distributions.transforms as npt
 
-T = tp.TypeVar("T", bound=tp.Union[ArrayLike, list[float]])
+T = tp.TypeVar("T", bound=ArrayLike | list[float])
 ParameterTag = str
 
 
@@ -55,7 +55,7 @@ class FillTriangularTransform(npt.Transform):
             batch_shape = x.shape[:-1]
             flat_x = x.reshape((-1, L))
             out = jax.vmap(fill_single)(flat_x)
-            return out.reshape(batch_shape + (n, n))
+            return out.reshape((*batch_shape, n, n))
 
     def _inverse(self, y):
         """
@@ -75,9 +75,7 @@ class FillTriangularTransform(npt.Transform):
             raise ValueError("Input to inverse must be at least two-dimensional.")
         n = y.shape[-1]
         if y.shape[-2] != n:
-            raise ValueError(
-                "Input matrix must be square; got shape %s" % str(y.shape[-2:])
-            )
+            raise ValueError(f"Input matrix must be square; got shape {y.shape[-2:]}")
 
         row, col = jnp.tril_indices(n)
 
@@ -90,7 +88,7 @@ class FillTriangularTransform(npt.Transform):
             batch_shape = y.shape[:-2]
             flat_y = y.reshape((-1, n, n))
             out = jax.vmap(inv_single)(flat_y)
-            return out.reshape(batch_shape + (n * (n + 1) // 2,))
+            return out.reshape((*batch_shape, n * (n + 1) // 2))
 
     def log_abs_det_jacobian(self, x, y, intermediates=None):
         # Since the transform simply reorders the vector into a matrix, the Jacobian determinant is 1.
@@ -113,7 +111,7 @@ class FillTriangularTransform(npt.Transform):
 
 def transform(
     params: nnx.State,
-    params_bijection: tp.Dict[str, npt.Transform],
+    params_bijection: dict[str, npt.Transform],
     inverse: bool = False,
 ) -> nnx.State:
     r"""Transforms parameters using a bijector.
@@ -131,7 +129,7 @@ def transform(
         ... )
         >>> params_bijection = {'positive': npt.SoftplusTransform()}
         >>> transformed_params = transform(params, params_bijection)
-        >>> print(transformed_params["a"].value)
+        >>> print(transformed_params["a"][...])
         [1.3132617]
 
     Args:
@@ -146,14 +144,14 @@ def transform(
     def _inner(param):
         bijector = params_bijection.get(param.tag, npt.IdentityTransform())
         if inverse:
-            transformed_value = bijector.inv(param.value)
+            transformed_value = bijector.inv(param[...])
         else:
-            transformed_value = bijector(param.value)
+            transformed_value = bijector(param[...])
 
         param = param.replace(transformed_value)
         return param
 
-    gp_params, *other_params = params.split(Parameter, ...)
+    gp_params, *other_params = nnx.split_state(params, Parameter, ...)
 
     # Transform each parameter in the state
     transformed_gp_params: nnx.State = jtu.tree_map(
@@ -161,7 +159,7 @@ def transform(
         gp_params,
         is_leaf=lambda x: isinstance(x, Parameter),
     )
-    return nnx.State.merge(transformed_gp_params, *other_params)
+    return nnx.merge_state(transformed_gp_params, *other_params)
 
 
 class Parameter(nnx.Variable[T]):
@@ -175,7 +173,7 @@ class Parameter(nnx.Variable[T]):
         self,
         value: T,
         tag: ParameterTag,
-        prior: tp.Optional[dist.Distribution] = None,
+        prior: dist.Distribution | None = None,
         **kwargs,
     ):
         _check_is_arraylike(value)
@@ -199,7 +197,7 @@ class NonNegativeReal(Parameter[T]):
 
     def __init__(self, value: T, tag: ParameterTag = "non_negative", **kwargs):
         super().__init__(value=value, tag=tag, **kwargs)
-        _safe_assert(_check_is_non_negative, self.value)
+        _safe_assert(_check_is_non_negative, self[...])
 
 
 class PositiveReal(Parameter[T]):
@@ -207,7 +205,7 @@ class PositiveReal(Parameter[T]):
 
     def __init__(self, value: T, tag: ParameterTag = "positive", **kwargs):
         super().__init__(value=value, tag=tag, **kwargs)
-        _safe_assert(_check_is_positive, self.value)
+        _safe_assert(_check_is_positive, self[...])
 
 
 class Real(Parameter[T]):
@@ -230,7 +228,7 @@ class SigmoidBounded(Parameter[T]):
         ):
             _safe_assert(
                 _check_in_bounds,
-                self.value,
+                self[...],
                 low=jnp.array(0.0),
                 high=jnp.array(1.0),
             )
@@ -247,8 +245,8 @@ class LowerTriangular(Parameter[T]):
             not isinstance(value, jnp.ndarray)
             or getattr(value, "aval", None) is not None
         ):
-            _safe_assert(_check_is_square, self.value)
-            _safe_assert(_check_is_lower_triangular, self.value)
+            _safe_assert(_check_is_square, self[...])
+            _safe_assert(_check_is_lower_triangular, self[...])
 
 
 DEFAULT_BIJECTION = {
