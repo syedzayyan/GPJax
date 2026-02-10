@@ -484,5 +484,90 @@ def test_conjugate_posterior_sample_approx(num_datapoints, kernel, mean_function
     assert max_error_in_var < 0.05  # check that samples are correct
 
 
+class TestMultiOutputPosteriorPredict:
+    @pytest.fixture
+    def mo_setup(self):
+        from gpjax.kernels.multioutput.icm import ICMKernel
+        from gpjax.likelihoods import MultiOutputGaussian
+        from gpjax.parameters import CoregionalizationMatrix
+
+        key = jr.PRNGKey(42)
+        N, P = 20, 2
+        X = jnp.linspace(0, 1, N).reshape(-1, 1)
+        y = jnp.column_stack([jnp.sin(X.squeeze()), jnp.cos(X.squeeze())])
+        data = Dataset(X=X, y=y)
+        coreg = CoregionalizationMatrix(num_outputs=P, rank=1, key=key)
+        kernel = ICMKernel(base_kernel=RBF(), coregionalization_matrix=coreg)
+        prior = Prior(mean_function=Zero(), kernel=kernel)
+        lik = MultiOutputGaussian(num_datapoints=N, num_outputs=P)
+        posterior = prior * lik
+        return posterior, data, N, P
+
+    def test_predict_mean_shape(self, mo_setup):
+        """Posterior mean is [M*P] (flat joint vector)."""
+        posterior, data, _N, P = mo_setup
+        M = 5
+        Xtest = jnp.linspace(0, 1, M).reshape(-1, 1)
+        pred = posterior.predict(Xtest, data)
+        assert pred.mean.shape == (M * P,)
+
+    def test_predict_covariance_shape(self, mo_setup):
+        """Posterior covariance is [MP, MP]."""
+        posterior, data, _N, P = mo_setup
+        M = 5
+        Xtest = jnp.linspace(0, 1, M).reshape(-1, 1)
+        pred = posterior.predict(Xtest, data)
+        assert pred.covariance().shape == (M * P, M * P)
+
+    def test_predict_mean_finite(self, mo_setup):
+        """Posterior mean is finite."""
+        posterior, data, _N, _P = mo_setup
+        Xtest = jnp.linspace(0, 1, 5).reshape(-1, 1)
+        pred = posterior.predict(Xtest, data)
+        assert jnp.all(jnp.isfinite(pred.mean))
+
+    def test_predict_covariance_psd(self, mo_setup):
+        """Posterior covariance is positive semi-definite."""
+        posterior, data, _N, _P = mo_setup
+        Xtest = jnp.linspace(0, 1, 5).reshape(-1, 1)
+        pred = posterior.predict(Xtest, data)
+        eigvals = jnp.linalg.eigvalsh(pred.covariance())
+        assert jnp.all(eigvals >= -1e-5)
+
+    def test_predict_at_training_recovers_data(self, mo_setup):
+        """At training points, posterior mean is close to training data."""
+        posterior, data, N, P = mo_setup
+        pred = posterior.predict(data.X, data)
+        # Mean is output-major [NP], reshape to [P, N] then transpose to [N, P]
+        mean_reshaped = pred.mean.reshape(P, N).T
+        residual = jnp.abs(mean_reshaped - data.y)
+        assert jnp.mean(residual) < 1.0  # Loose bound
+
+
+class TestMultiOutputValidation:
+    def test_mo_likelihood_with_so_kernel_raises(self):
+        """MultiOutputGaussian + single-output kernel raises ValueError."""
+        from gpjax.likelihoods import MultiOutputGaussian
+
+        kernel = RBF()
+        prior = Prior(mean_function=Zero(), kernel=kernel)
+        lik = MultiOutputGaussian(num_datapoints=10, num_outputs=2)
+        with pytest.raises(ValueError, match="multi-output kernel"):
+            prior * lik
+
+    def test_mo_kernel_with_so_likelihood_raises(self):
+        """Multi-output kernel + Gaussian (not MultiOutput) raises ValueError."""
+        from gpjax.kernels.multioutput.icm import ICMKernel
+        from gpjax.parameters import CoregionalizationMatrix
+
+        key = jr.PRNGKey(0)
+        coreg = CoregionalizationMatrix(num_outputs=2, rank=1, key=key)
+        kernel = ICMKernel(base_kernel=RBF(), coregionalization_matrix=coreg)
+        prior = Prior(mean_function=Zero(), kernel=kernel)
+        lik = Gaussian(num_datapoints=10)
+        with pytest.raises(ValueError, match="MultiOutputGaussian"):
+            prior * lik
+
+
 if __name__ == "__main__":
     test_conjugate_posterior_sample_approx(10, RBF, Zero)

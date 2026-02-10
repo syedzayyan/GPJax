@@ -583,42 +583,50 @@ class ConjugatePosterior(AbstractPosterior[P, GL]):
             GaussianDistribution: A function that accepts an input array and
                 returns the predictive distribution as a `GaussianDistribution`.
         """
-        x = train_data.X
-        y = train_data.y
-        # Observation noise o²
-        obs_noise = jnp.square(self.likelihood.obs_stddev[...])
-        mx = self.prior.mean_function(x)
-        # Precompute Gram matrix, Kxx, at training inputs, x
-        Kxx = self.prior.kernel.gram(x)
-        Kxx = add_jitter(Kxx.to_dense(), self.jitter)
+        import warnings
 
-        Sigma_dense = Kxx + jnp.eye(Kxx.shape[0]) * obs_noise
+        kernel = self.prior.kernel
+        x, y = train_data.X, train_data.y
+        P = self.likelihood.num_outputs
+
+        # Prepare targets via likelihood protocol (identity for single-output,
+        # output-major reshape for multi-output)
+        mx = self.prior.mean_function(x)
+        y_flat, mx_flat = self.likelihood.prepare_targets(y, mx)
+        noise = self.likelihood.noise_vector(train_data.n)
+
+        Kxx = kernel.gram(x)
+        Kxx_dense = add_jitter(Kxx.to_dense(), self.jitter)
+        Sigma_dense = Kxx_dense + jnp.diag(noise)
         Sigma = psd(Dense(Sigma_dense))
         L_sigma = lower_cholesky(Sigma)
 
-        Kxt = self.prior.kernel.cross_covariance(x, test_inputs)
-
+        Kxt = kernel.cross_covariance(x, test_inputs)
         L_inv_Kxt = solve(L_sigma, Kxt)
-        L_inv_y_diff = solve(L_sigma, y - mx)
+        L_inv_y_diff = solve(L_sigma, y_flat - mx_flat)
 
-        mean_t = self.prior.mean_function(test_inputs)
+        mean_t_raw = self.prior.mean_function(test_inputs)
+        mean_t = jnp.tile(mean_t_raw, (P, 1)) if P > 1 else mean_t_raw
         mean = mean_t + jnp.matmul(L_inv_Kxt.T, L_inv_y_diff)
 
-        def _return_full_covariance(
-            L_inv_Kxt: Num[Array, "N M"],
-            t: Num[Array, "M D"],
-        ) -> Dense:
-            Ktt = self.prior.kernel.gram(t)
+        # Diagonal covariance not yet supported for multi-output
+        if return_covariance_type == "diagonal" and P > 1:
+            warnings.warn(
+                "Diagonal covariance is not yet supported for multi-output GPs. "
+                "Returning full covariance.",
+                stacklevel=2,
+            )
+            return_covariance_type = "dense"
+
+        def _return_full_covariance(L_inv_Kxt, t):
+            Ktt = kernel.gram(t)
             covariance = Ktt.to_dense() - jnp.matmul(L_inv_Kxt.T, L_inv_Kxt)
             covariance = add_jitter(covariance, self.prior.jitter)
             covariance = psd(Dense(covariance))
             return covariance
 
-        def _return_diagonal_covariance(
-            L_inv_Kxt: Num[Array, "N M"],
-            t: Num[Array, "M D"],
-        ) -> Dense:
-            Ktt = self.prior.kernel.diagonal(t).diagonal
+        def _return_diagonal_covariance(L_inv_Kxt, t):
+            Ktt = kernel.diagonal(t).diagonal
             covariance = Ktt - jnp.einsum("ij, ji->i", L_inv_Kxt.T, L_inv_Kxt)
             covariance += self.prior.jitter
             covariance = psd(Dense(jnp.diag(jnp.atleast_1d(covariance.squeeze()))))
@@ -925,6 +933,23 @@ def construct_posterior(
         `ConjugatePosterior` will be returned. Otherwise, a
         `NonConjugatePosterior` will be returned.
     """
+    # Multi-output validation
+    from gpjax.kernels.multioutput.base import MultiOutputKernel
+    from gpjax.likelihoods import MultiOutputGaussian
+
+    is_mo_kernel = isinstance(prior.kernel, MultiOutputKernel)
+    is_mo_likelihood = isinstance(likelihood, MultiOutputGaussian)
+
+    if is_mo_likelihood and not is_mo_kernel:
+        raise ValueError(
+            "MultiOutputGaussian likelihood requires a multi-output kernel "
+            "(e.g., ICMKernel)."
+        )
+    if is_mo_kernel and not is_mo_likelihood:
+        raise ValueError(
+            "Multi-output kernels require a MultiOutputGaussian likelihood."
+        )
+
     if isinstance(likelihood, Gaussian):
         return ConjugatePosterior(prior=prior, likelihood=likelihood)
 

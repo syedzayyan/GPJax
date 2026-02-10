@@ -98,21 +98,34 @@ def conjugate_mll(posterior: ConjugatePosterior, data: Dataset) -> ScalarFloat:
         The marginal log-likelihood of the Gaussian process.
     """
 
-    x, y = data.X, data.y
+    from gpjax.kernels.multioutput.base import MultiOutputKernel
 
-    # Observation noise o²
-    obs_noise = posterior.likelihood.obs_stddev[...] ** 2
+    x, y = data.X, data.y
+    kernel = posterior.prior.kernel
     mx = posterior.prior.mean_function(x)
 
-    # Σ = (Kxx + Io²) = LLᵀ
-    Kxx = posterior.prior.kernel.gram(x)
+    # Validation for multi-output models (user-facing error messages)
+    if isinstance(kernel, MultiOutputKernel):
+        if not data.multi_output:
+            raise ValueError("MultiOutputKernel requires multi-output data.")
+        if data.num_outputs != kernel.num_outputs:
+            raise ValueError(
+                f"Dataset has {data.num_outputs} outputs "
+                f"but kernel expects {kernel.num_outputs}."
+            )
+
+    # Unified path — prepare_targets is identity for single-output,
+    # output-major reshape for multi-output
+    y_flat, mx_flat = posterior.likelihood.prepare_targets(y, mx)
+    noise = posterior.likelihood.noise_vector(data.n)
+
+    Kxx = kernel.gram(x)
     Kxx_dense = add_jitter(Kxx.to_dense(), posterior.prior.jitter)
-    Sigma_dense = Kxx_dense + jnp.eye(Kxx.shape[0]) * obs_noise
+    Sigma_dense = Kxx_dense + jnp.diag(noise)
     Sigma = psd(Dense(Sigma_dense))
 
-    # p(y | x, θ), where θ are the model hyperparameters:
-    mll = GaussianDistribution(jnp.atleast_1d(mx.squeeze()), Sigma)
-    return mll.log_prob(jnp.atleast_1d(y.squeeze())).squeeze()
+    mll = GaussianDistribution(jnp.atleast_1d(mx_flat.squeeze()), Sigma)
+    return mll.log_prob(jnp.atleast_1d(y_flat.squeeze())).squeeze()
 
 
 def conjugate_loocv(posterior: ConjugatePosterior, data: Dataset) -> ScalarFloat:

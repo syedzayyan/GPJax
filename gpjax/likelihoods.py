@@ -317,6 +317,7 @@ class Gaussian(AbstractLikelihood):
         if not isinstance(obs_stddev, NonNegativeReal):
             obs_stddev = NonNegativeReal(jnp.asarray(obs_stddev))
         self.obs_stddev = obs_stddev
+        self.num_outputs = 1
 
         super().__init__(num_datapoints, integrator)
 
@@ -353,6 +354,58 @@ class Gaussian(AbstractLikelihood):
         noisy_cov = cov.at[jnp.diag_indices(n_data)].add(self.obs_stddev[...] ** 2)
 
         return npd.MultivariateNormal(dist.mean, noisy_cov)
+
+    def noise_vector(self, n: int) -> Float[Array, " N"]:
+        """Per-observation noise variance vector (scalar broadcast for single-output)."""
+        return jnp.full(n, jnp.square(self.obs_stddev[...]))
+
+    def prepare_targets(
+        self, y: Float[Array, "N 1"], mx: Float[Array, "N 1"]
+    ) -> tuple[Float[Array, "N 1"], Float[Array, "N 1"]]:
+        """Return targets and mean in the format expected by the unified predict/MLL path."""
+        return y, mx
+
+
+class MultiOutputGaussian(Gaussian):
+    """Gaussian likelihood with per-output noise variance.
+
+    Args:
+        num_datapoints: Total number of observations (N, not N*P).
+        num_outputs: Number of output dimensions (P).
+        obs_stddev: Per-output noise standard deviation. Scalar broadcasts to [P].
+    """
+
+    def __init__(
+        self,
+        num_datapoints: int,
+        num_outputs: int,
+        obs_stddev: tp.Union[float, Float[Array, " P"]] = 1.0,
+    ):
+        if isinstance(obs_stddev, (int, float)):
+            obs_stddev = jnp.full(num_outputs, float(obs_stddev))
+        super().__init__(
+            num_datapoints=num_datapoints,
+            obs_stddev=NonNegativeReal(jnp.asarray(obs_stddev)),
+        )
+        self.num_outputs = num_outputs
+
+    def noise_vector(self, n: int) -> Float[Array, " NP"]:
+        """Per-observation noise variance in output-major (Kronecker) order.
+
+        Returns sigma_p^2 with each output's variance repeated N times,
+        concatenated across outputs: [σ₁²...σ₁², σ₂²...σ₂², ...].
+        """
+        per_output_var = jnp.square(self.obs_stddev[...])  # [P]
+        return jnp.repeat(per_output_var, n)  # [NP]
+
+    def prepare_targets(
+        self, y: Float[Array, "N P"], mx: Float[Array, "N 1"]
+    ) -> tuple[Float[Array, "NP 1"], Float[Array, "NP 1"]]:
+        """Reshape multi-output targets to output-major long format."""
+        P = self.num_outputs
+        y_flat = y.T.reshape(-1, 1)  # [N, P] -> [NP, 1]
+        mx_flat = jnp.tile(mx, (P, 1))  # [N, 1] -> [NP, 1]
+        return y_flat, mx_flat
 
 
 class HeteroscedasticGaussian(AbstractHeteroscedasticLikelihood):
@@ -505,6 +558,7 @@ __all__ = [
     "Gaussian",
     "HeteroscedasticGaussian",
     "LogNormalTransform",
+    "MultiOutputGaussian",
     "NoiseMoments",
     "NonGaussian",
     "Poisson",
