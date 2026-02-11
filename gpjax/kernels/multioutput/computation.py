@@ -3,6 +3,7 @@ from jaxtyping import Float, Num
 
 from gpjax.kernels.computations.base import AbstractKernelComputation
 from gpjax.linalg import Dense, Diagonal, Kronecker
+from gpjax.linalg.operators import LinearOperator
 from gpjax.linalg.utils import psd
 from gpjax.typing import Array
 
@@ -10,18 +11,21 @@ from gpjax.typing import Array
 class MultiOutputKernelComputation(AbstractKernelComputation):
     """Compute engine for multi-output kernels.
 
-    Dispatches on kernel type to build structured covariance matrices.
-    Currently supports ICMKernel (Kronecker structure).
+    Iterates over kernel.components — a sequence of (CoregionalizationMatrix,
+    kernel) pairs — to build structured covariance matrices.  Single-component
+    kernels (ICM) retain Kronecker structure; multi-component kernels (LCM)
+    materialise the sum to Dense.
     """
 
-    def gram(self, kernel, x: Num[Array, "N D"]) -> Kronecker:
-        from gpjax.kernels.multioutput.icm import ICMKernel
-
-        if isinstance(kernel, ICMKernel):
-            K_input = kernel.base_kernel.gram(x)
-            B = Dense(kernel.coregionalization_matrix.B)
+    def gram(self, kernel, x: Num[Array, "N D"]) -> LinearOperator:
+        components = kernel.components
+        if len(components) == 1:
+            cm, k = components[0]
+            K_input = k.gram(x)
+            B = Dense(cm.B)
             return psd(Kronecker([B, K_input]))
-        raise NotImplementedError(f"No gram implementation for {type(kernel).__name__}")
+        K = sum(jnp.kron(cm.B, k.gram(x).to_dense()) for cm, k in components)
+        return psd(Dense(K))
 
     def cross_covariance(
         self, kernel, x: Num[Array, "N D"], y: Num[Array, "M D"]
@@ -32,23 +36,13 @@ class MultiOutputKernelComputation(AbstractKernelComputation):
     def _cross_covariance(
         self, kernel, x: Num[Array, "N D"], y: Num[Array, "M D"]
     ) -> Float[Array, "..."]:
-        from gpjax.kernels.multioutput.icm import ICMKernel
-
-        if isinstance(kernel, ICMKernel):
-            Kxy = kernel.base_kernel.cross_covariance(x, y)
-            B = kernel.coregionalization_matrix.B
-            return jnp.kron(B, Kxy)
-        raise NotImplementedError(
-            f"No cross_covariance implementation for {type(kernel).__name__}"
+        return sum(
+            jnp.kron(cm.B, k.cross_covariance(x, y)) for cm, k in kernel.components
         )
 
     def diagonal(self, kernel, inputs: Num[Array, "N D"]) -> Diagonal:
-        from gpjax.kernels.multioutput.icm import ICMKernel
-
-        if isinstance(kernel, ICMKernel):
-            k_diag = kernel.base_kernel.diagonal(inputs).diagonal
-            b_diag = jnp.diag(kernel.coregionalization_matrix.B)
-            return psd(Diagonal(jnp.kron(b_diag, k_diag)))
-        raise NotImplementedError(
-            f"No diagonal implementation for {type(kernel).__name__}"
+        diag_sum = sum(
+            jnp.kron(jnp.diag(cm.B), k.diagonal(inputs).diagonal)
+            for cm, k in kernel.components
         )
+        return psd(Diagonal(diag_sum))
