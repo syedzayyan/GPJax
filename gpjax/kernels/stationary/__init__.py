@@ -1,4 +1,4 @@
-# Copyright 2022 The JaxGaussianProcesses Contributors. All Rights Reserved.
+# Copyright 2022 The thomaspinder Contributors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,13 +24,13 @@ from gpjax.kernels.stationary.rbf import RBF
 from gpjax.kernels.stationary.white import White
 
 __all__ = [
+    "RBF",
     "Matern12",
     "Matern32",
     "Matern52",
     "Periodic",
     "PoweredExponential",
     "RationalQuadratic",
-    "RBF",
     "StationaryKernel",
     "White",
 ]

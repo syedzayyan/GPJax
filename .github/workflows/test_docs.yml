@@ -3,11 +3,17 @@ name: Test documentation
 on:
   pull_request:
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
 jobs:
   test-docs:
     # Functionality for testing documentation builds on multiple OSes and Python versions
     name: Build docs
     runs-on: "ubuntu-latest"
+    timeout-minutes: 30
     concurrency:
       group: ${{ github.head_ref }}
       cancel-in-progress: true
@@ -18,7 +24,7 @@ jobs:
     steps:
       # Grap the latest commit from the branch
       - name: Checkout the branch
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
 
@@ -35,10 +41,37 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
+          enable-cache: true
 
       - name: Build the documentation with MKDocs
         run: |
           conda install pandoc
-          uv sync --extra docs
+          uv sync --frozen --extra docs
           uv run python docs/scripts/gen_examples.py --execute
           uv run mkdocs build
+
+      - name: Upload built docs artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: docs-site-html
+          path: site
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy-docs-preview:
+    needs: test-docs
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: docs-preview
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy MkDocs preview
+        id: deployment
+        uses: actions/deploy-pages@v4
+        with:
+          preview: true

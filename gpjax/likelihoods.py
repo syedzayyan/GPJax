@@ -10,15 +10,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
+from __future__ import annotations
 
 import abc
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import beartype.typing as tp
 from flax import nnx
+import jax
 from jax import vmap
+import jax.nn as jnn
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jaxtyping import Float
+import numpy as np
 import numpyro.distributions as npd
 
 from gpjax.distributions import GaussianDistribution
@@ -33,6 +39,23 @@ from gpjax.parameters import (
 from gpjax.typing import (
     Array,
     ScalarFloat,
+)
+
+if TYPE_CHECKING:
+    from gpjax.gps import Prior
+
+
+@dataclass(slots=True)
+class NoiseMoments:
+    log_variance: Array
+    inv_variance: Array
+    variance: Array
+
+
+jax.tree_util.register_pytree_node(
+    NoiseMoments,
+    lambda x: ((x.log_variance, x.inv_variance, x.variance), None),
+    lambda _, x: NoiseMoments(*x),
 )
 
 
@@ -86,7 +109,7 @@ class AbstractLikelihood(nnx.Module):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def link_function(self, f: Float[Array, "..."]) -> npd.Distribution:
+    def link_function(self, f: Float[Array, ...]) -> npd.Distribution:
         r"""Return the link function of the likelihood function.
 
         Args:
@@ -103,6 +126,9 @@ class AbstractLikelihood(nnx.Module):
         y: Float[Array, "N D"],
         mean: Float[Array, "N D"],
         variance: Float[Array, "N D"],
+        mean_g: tp.Optional[Float[Array, "N D"]] = None,
+        variance_g: tp.Optional[Float[Array, "N D"]] = None,
+        **_: tp.Any,
     ) -> Float[Array, " N"]:
         r"""Compute the expected log likelihood.
 
@@ -116,6 +142,12 @@ class AbstractLikelihood(nnx.Module):
             y (Float[Array, 'N D']): The observed response variable.
             mean (Float[Array, 'N D']): The variational mean.
             variance (Float[Array, 'N D']): The variational variance.
+            mean_g (Float[Array, 'N D']): Optional moments of the latent noise
+                process for heteroscedastic likelihoods.
+            variance_g (Float[Array, 'N D']): Optional moments of the latent noise
+                process for heteroscedastic likelihoods.
+            **_: Unused extra arguments for compatibility with specialised
+                likelihoods.
 
         Returns:
             ScalarFloat: The expected log likelihood.
@@ -124,6 +156,143 @@ class AbstractLikelihood(nnx.Module):
         return self.integrator(
             fun=log_prob, y=y, mean=mean, variance=variance, likelihood=self
         )
+
+
+class AbstractNoiseTransform(nnx.Module):
+    """Abstract base class for noise transformations."""
+
+    @abc.abstractmethod
+    def __call__(self, x: Float[Array, ...]) -> Float[Array, ...]:
+        """Transform the input noise signal."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def moments(
+        self, mean: Float[Array, ...], variance: Float[Array, ...]
+    ) -> NoiseMoments:
+        """Compute the moments of the transformed noise signal."""
+        raise NotImplementedError
+
+
+class LogNormalTransform(AbstractNoiseTransform):
+    """Log-normal noise transformation."""
+
+    def __call__(self, x: Float[Array, ...]) -> Float[Array, ...]:
+        return jnp.exp(x)
+
+    def moments(
+        self, mean: Float[Array, ...], variance: Float[Array, ...]
+    ) -> NoiseMoments:
+        expected_variance = jnp.exp(mean + 0.5 * variance)
+        expected_log_variance = mean
+        expected_inv_variance = jnp.exp(-mean + 0.5 * variance)
+        return NoiseMoments(
+            log_variance=expected_log_variance,
+            inv_variance=expected_inv_variance,
+            variance=expected_variance,
+        )
+
+
+class SoftplusTransform(AbstractNoiseTransform):
+    """Softplus noise transformation."""
+
+    def __init__(self, num_points: int = 20):
+        self.num_points = num_points
+
+    def __call__(self, x: Float[Array, ...]) -> Float[Array, ...]:
+        return jnn.softplus(x)
+
+    def moments(
+        self, mean: Float[Array, ...], variance: Float[Array, ...]
+    ) -> NoiseMoments:
+        quad_x, quad_w = np.polynomial.hermite.hermgauss(self.num_points)
+        quad_w = jnp.asarray(quad_w / jnp.sqrt(jnp.pi))
+        quad_x = jnp.asarray(quad_x)
+
+        std = jnp.sqrt(variance)
+        samples = mean[..., None] + jnp.sqrt(2.0) * std[..., None] * quad_x
+        sigma2 = self(samples)
+        log_sigma2 = jnp.log(sigma2)
+        inv_sigma2 = 1.0 / sigma2
+
+        expected_variance = jnp.sum(sigma2 * quad_w, axis=-1)
+        expected_log_variance = jnp.sum(log_sigma2 * quad_w, axis=-1)
+        expected_inv_variance = jnp.sum(inv_sigma2 * quad_w, axis=-1)
+
+        return NoiseMoments(
+            log_variance=expected_log_variance,
+            inv_variance=expected_inv_variance,
+            variance=expected_variance,
+        )
+
+
+class AbstractHeteroscedasticLikelihood(AbstractLikelihood):
+    r"""Base class for heteroscedastic likelihoods with latent noise processes."""
+
+    def __init__(
+        self,
+        num_datapoints: int,
+        noise_prior: Prior,
+        noise_transform: tp.Union[
+            AbstractNoiseTransform,
+            tp.Callable[[Float[Array, ...]], Float[Array, ...]],
+        ] = SoftplusTransform(),
+        integrator: AbstractIntegrator = GHQuadratureIntegrator(),
+    ):
+        self.noise_prior = noise_prior
+
+        if isinstance(noise_transform, AbstractNoiseTransform):
+            self.noise_transform = noise_transform
+        else:
+            transform_name = getattr(noise_transform, "__name__", "")
+            if noise_transform is jnp.exp or transform_name == "exp":
+                self.noise_transform = LogNormalTransform()
+            else:
+                # Default to SoftplusTransform for softplus or unknown callables (legacy behavior used quadrature)
+                # Note: If an unknown callable is passed, we technically use SoftplusTransform which applies softplus.
+                # Users should implement AbstractNoiseTransform for custom transforms.
+                self.noise_transform = SoftplusTransform()
+
+        super().__init__(num_datapoints=num_datapoints, integrator=integrator)
+
+    def __call__(
+        self,
+        dist: tp.Union[npd.MultivariateNormal, GaussianDistribution],
+        noise_dist: tp.Optional[
+            tp.Union[npd.MultivariateNormal, GaussianDistribution]
+        ] = None,
+    ) -> npd.Distribution:
+        return self.predict(dist, noise_dist)
+
+    def supports_tight_bound(self) -> bool:
+        """Return whether the tighter bound from Lázaro-Gredilla & Titsias (2011)
+        is applicable."""
+        return False
+
+    def noise_statistics(
+        self, mean: Float[Array, "N D"], variance: Float[Array, "N D"]
+    ) -> NoiseMoments:
+        r"""Moment matching of the transformed noise process.
+
+        Args:
+            mean: Mean of the latent noise GP.
+            variance: Variance of the latent noise GP.
+
+        Returns:
+            NoiseMoments: Expected log variance, inverse variance, and variance.
+        """
+        return self.noise_transform.moments(mean, variance)
+
+    def expected_log_likelihood(
+        self,
+        y: Float[Array, "N D"],
+        mean: Float[Array, "N D"],
+        variance: Float[Array, "N D"],
+        mean_g: tp.Optional[Float[Array, "N D"]] = None,
+        variance_g: tp.Optional[Float[Array, "N D"]] = None,
+        **kwargs: tp.Any,
+    ) -> Float[Array, " N"]:
+        raise NotImplementedError
 
 
 class Gaussian(AbstractLikelihood):
@@ -148,10 +317,11 @@ class Gaussian(AbstractLikelihood):
         if not isinstance(obs_stddev, NonNegativeReal):
             obs_stddev = NonNegativeReal(jnp.asarray(obs_stddev))
         self.obs_stddev = obs_stddev
+        self.num_outputs = 1
 
         super().__init__(num_datapoints, integrator)
 
-    def link_function(self, f: Float[Array, "..."]) -> npd.Normal:
+    def link_function(self, f: Float[Array, ...]) -> npd.Normal:
         r"""The link function of the Gaussian likelihood.
 
         Args:
@@ -160,7 +330,7 @@ class Gaussian(AbstractLikelihood):
         Returns:
             npd.Normal: The likelihood function.
         """
-        return npd.Normal(loc=f, scale=self.obs_stddev.value.astype(f.dtype))
+        return npd.Normal(loc=f, scale=self.obs_stddev[...].astype(f.dtype))
 
     def predict(
         self, dist: tp.Union[npd.MultivariateNormal, GaussianDistribution]
@@ -181,13 +351,128 @@ class Gaussian(AbstractLikelihood):
         """
         n_data = dist.event_shape[0]
         cov = dist.covariance_matrix
-        noisy_cov = cov.at[jnp.diag_indices(n_data)].add(self.obs_stddev.value**2)
+        noisy_cov = cov.at[jnp.diag_indices(n_data)].add(self.obs_stddev[...] ** 2)
 
         return npd.MultivariateNormal(dist.mean, noisy_cov)
 
+    def noise_vector(self, n: int) -> Float[Array, " N"]:
+        """Per-observation noise variance vector (scalar broadcast for single-output)."""
+        return jnp.full(n, jnp.square(self.obs_stddev[...]))
+
+    def prepare_targets(
+        self, y: Float[Array, "N 1"], mx: Float[Array, "N 1"]
+    ) -> tuple[Float[Array, "N 1"], Float[Array, "N 1"]]:
+        """Return targets and mean in the format expected by the unified predict/MLL path."""
+        return y, mx
+
+
+class MultiOutputGaussian(Gaussian):
+    """Gaussian likelihood with per-output noise variance.
+
+    Args:
+        num_datapoints: Total number of observations (N, not N*P).
+        num_outputs: Number of output dimensions (P).
+        obs_stddev: Per-output noise standard deviation. Scalar broadcasts to [P].
+    """
+
+    def __init__(
+        self,
+        num_datapoints: int,
+        num_outputs: int,
+        obs_stddev: tp.Union[float, Float[Array, " P"]] = 1.0,
+    ):
+        if isinstance(obs_stddev, (int, float)):
+            obs_stddev = jnp.full(num_outputs, float(obs_stddev))
+        super().__init__(
+            num_datapoints=num_datapoints,
+            obs_stddev=NonNegativeReal(jnp.asarray(obs_stddev)),
+        )
+        self.num_outputs = num_outputs
+
+    def noise_vector(self, n: int) -> Float[Array, " NP"]:
+        """Per-observation noise variance in output-major (Kronecker) order.
+
+        Returns sigma_p^2 with each output's variance repeated N times,
+        concatenated across outputs: [σ₁²...σ₁², σ₂²...σ₂², ...].
+        """
+        per_output_var = jnp.square(self.obs_stddev[...])  # [P]
+        return jnp.repeat(per_output_var, n)  # [NP]
+
+    def prepare_targets(
+        self, y: Float[Array, "N P"], mx: Float[Array, "N 1"]
+    ) -> tuple[Float[Array, "NP 1"], Float[Array, "NP 1"]]:
+        """Reshape multi-output targets to output-major long format."""
+        P = self.num_outputs
+        y_flat = y.T.reshape(-1, 1)  # [N, P] -> [NP, 1]
+        mx_flat = jnp.tile(mx, (P, 1))  # [N, 1] -> [NP, 1]
+        return y_flat, mx_flat
+
+
+class HeteroscedasticGaussian(AbstractHeteroscedasticLikelihood):
+    def predict(
+        self,
+        dist: tp.Union[npd.MultivariateNormal, GaussianDistribution],
+        noise_dist: tp.Optional[
+            tp.Union[npd.MultivariateNormal, GaussianDistribution]
+        ] = None,
+    ) -> npd.MultivariateNormal:
+        if noise_dist is None:
+            raise ValueError(
+                "noise_dist must be provided for heteroscedastic prediction."
+            )
+
+        n_data = dist.event_shape[0]
+        noise_mean = noise_dist.mean
+        noise_variance = jnp.diag(noise_dist.covariance_matrix)
+        noise_stats = self.noise_statistics(
+            noise_mean[..., None], noise_variance[..., None]
+        )
+
+        cov = dist.covariance_matrix
+        noisy_cov = cov.at[jnp.diag_indices(n_data)].add(noise_stats.variance.squeeze())
+
+        return npd.MultivariateNormal(dist.mean, noisy_cov)
+
+    def link_function(self, f: Float[Array, ...]) -> npd.Normal:
+        sigma2 = self.noise_transform(jnp.zeros_like(f))
+        return npd.Normal(loc=f, scale=jnp.sqrt(sigma2))
+
+    def expected_log_likelihood(
+        self,
+        y: Float[Array, "N D"],
+        mean: Float[Array, "N D"],
+        variance: Float[Array, "N D"],
+        mean_g: tp.Optional[Float[Array, "N D"]] = None,
+        variance_g: tp.Optional[Float[Array, "N D"]] = None,
+        noise_stats: tp.Optional[NoiseMoments] = None,
+        return_parts: bool = False,
+        **_: tp.Any,
+    ) -> tp.Union[Float[Array, " N"], tuple[Float[Array, " N"], NoiseMoments]]:
+        if mean_g is None or variance_g is None:
+            raise ValueError(
+                "mean_g and variance_g must be provided for heteroscedastic models."
+            )
+
+        if noise_stats is None:
+            noise_stats = self.noise_statistics(mean_g, variance_g)
+        sq_error = jnp.square(y - mean)
+        log2pi = jnp.log(2.0 * jnp.pi)
+        expected = -0.5 * (
+            log2pi
+            + noise_stats.log_variance
+            + (sq_error + variance) * noise_stats.inv_variance
+        )
+        expected_sum = jnp.sum(expected, axis=1)
+        if return_parts:
+            return expected_sum, noise_stats
+        return expected_sum
+
+    def supports_tight_bound(self) -> bool:
+        return True
+
 
 class Bernoulli(AbstractLikelihood):
-    def link_function(self, f: Float[Array, "..."]) -> npd.BernoulliProbs:
+    def link_function(self, f: Float[Array, ...]) -> npd.BernoulliProbs:
         r"""The probit link function of the Bernoulli likelihood.
 
         Args:
@@ -219,7 +504,7 @@ class Bernoulli(AbstractLikelihood):
 
 
 class Poisson(AbstractLikelihood):
-    def link_function(self, f: Float[Array, "..."]) -> npd.Poisson:
+    def link_function(self, f: Float[Array, ...]) -> npd.Poisson:
         r"""The link function of the Poisson likelihood.
 
         Args:
@@ -256,7 +541,8 @@ def inv_probit(x: Float[Array, " *N"]) -> Float[Array, " *N"]:
 
     Returns
     -------
-        Float[Array, "*N"]: The inverse probit of the input vector.
+    Float[Array, "*N"]
+        The inverse probit of the input vector.
     """
     jitter = 1e-3  # To ensure output is in interval (0, 1).
     return 0.5 * (1.0 + jsp.special.erf(x / jnp.sqrt(2.0))) * (1 - 2 * jitter) + jitter
@@ -265,10 +551,17 @@ def inv_probit(x: Float[Array, " *N"]) -> Float[Array, " *N"]:
 NonGaussian = tp.Union[Poisson, Bernoulli]
 
 __all__ = [
+    "AbstractHeteroscedasticLikelihood",
     "AbstractLikelihood",
-    "NonGaussian",
-    "Gaussian",
+    "AbstractNoiseTransform",
     "Bernoulli",
+    "Gaussian",
+    "HeteroscedasticGaussian",
+    "LogNormalTransform",
+    "MultiOutputGaussian",
+    "NoiseMoments",
+    "NonGaussian",
     "Poisson",
+    "SoftplusTransform",
     "inv_probit",
 ]

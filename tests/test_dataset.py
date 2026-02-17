@@ -1,4 +1,4 @@
-# Copyright 2022 The JaxGaussianProcesses Contributors. All Rights Reserved.
+# Copyright 2022 The thomaspinder Contributors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,12 +23,11 @@ try:
 except ImportError:
     ValidationErrors = ValueError
 
+from gpjax.dataset import Dataset
 from jax import config
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import pytest
-
-from gpjax.dataset import Dataset
 
 config.update("jax_enable_x64", True)
 
@@ -181,3 +180,21 @@ def test_precision_warning(
         Dataset(X=x, y=y)
 
     assert len(record) == expected_warnings
+
+
+def test_dataset_single_output_properties():
+    """Single-output dataset has multi_output=False, num_outputs=1."""
+    X = jnp.linspace(0, 1, 10).reshape(-1, 1)
+    y = jnp.sin(X)
+    D = Dataset(X=X, y=y)
+    assert D.multi_output is False
+    assert D.num_outputs == 1
+
+
+def test_dataset_multi_output_properties():
+    """Multi-output dataset has multi_output=True, num_outputs=P."""
+    X = jnp.linspace(0, 1, 10).reshape(-1, 1)
+    y = jnp.column_stack([jnp.sin(X), jnp.cos(X), X**2])
+    D = Dataset(X=X, y=y)
+    assert D.multi_output is True
+    assert D.num_outputs == 3

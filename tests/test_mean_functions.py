@@ -1,4 +1,4 @@
-# Copyright 2023 The JaxGaussianProcesses Contributors. All Rights Reserved.
+# Copyright 2023 The thomaspinder Contributors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,6 +21,17 @@ config.update("jax_enable_x64", True)
 
 import warnings
 
+import gpjax as gpx
+from gpjax.mean_functions import (
+    AbstractMeanFunction,
+    CombinationMeanFunction,
+    Constant,
+    Zero,
+)
+from gpjax.parameters import (
+    Parameter,
+    Real,
+)
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import (
@@ -30,15 +41,6 @@ from jaxtyping import (
 )
 import pytest
 from scipy.optimize import OptimizeWarning
-
-import gpjax as gpx
-from gpjax.mean_functions import (
-    AbstractMeanFunction,
-    CombinationMeanFunction,
-    Constant,
-    Zero,
-)
-from gpjax.parameters import Parameter
 
 
 def test_abstract() -> None:
@@ -73,7 +75,7 @@ def test_constant(constant: Float[Array, " Q"]) -> None:
 
 
 def test_zero_mean_remains_zero() -> None:
-    key = jr.PRNGKey(123)
+    key = jr.key(123)
 
     x = jr.uniform(key=key, minval=0, maxval=1, shape=(20, 1))
     y = jnp.full((20, 1), 50, dtype=jnp.float64)  # Dataset with non-zero mean
@@ -265,7 +267,7 @@ def test_constant_mean_function_with_parameter():
 
     # Check that the constant is stored as a Parameter
     assert isinstance(meanf.constant, Real)
-    assert jnp.allclose(meanf.constant.value, 2.5)
+    assert jnp.allclose(meanf.constant[...], 2.5)
 
     # Test evaluation
     x = jnp.array([[1.0], [2.0], [3.0]])
@@ -323,3 +325,15 @@ def test_zero_mean_function_uses_raw_value():
     result = meanf(x)
     expected = jnp.array([[0.0], [0.0], [0.0]])
     assert jnp.allclose(result, expected)
+
+
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+@pytest.mark.parametrize("partype", [Real, jnp.array])
+def test_constant_dtype_preservation(dtype, partype):
+    """Test that Constant mean function preserves dtype of the constant."""
+    x = jnp.arange(5, dtype=dtype).reshape(-1, 1)
+    constant = partype(jnp.array(3.0, dtype=dtype))
+    mean_fn = Constant(constant)
+    mean = mean_fn(x)
+
+    assert mean.dtype == dtype

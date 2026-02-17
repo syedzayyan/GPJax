@@ -26,11 +26,9 @@ from beartype.typing import (
     Callable,
     Dict,
 )
-import jax.numpy as jnp  # noqa: F401
-import jupytext
-
-# %%
 import gpjax
+import jax.numpy as jnp
+import jupytext
 
 # %%
 get_last = lambda x: x[-1]
@@ -80,7 +78,6 @@ class Result:
         contents = "\n".join([line for line in lines if not line.startswith("%")])
 
         loc = {}
-
         # weird bug in interactive interpreter: lambda functions
         # don't have access to the global scope of the executed file
         # so we need to pass gpjax in the globals explicitly
@@ -127,3 +124,12 @@ stochastic = Result(
     },
 )
 stochastic.test()
+
+# %%
+heteroscedastic = Result(
+    path="examples/heteroscedastic_inference.py",
+    comparisons={
+        "history": (251.918, get_last),
+    },
+)
+heteroscedastic.test()

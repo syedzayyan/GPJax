@@ -1,4 +1,4 @@
-# Copyright 2022 The JaxGaussianProcesses Contributors. All Rights Reserved.
+# Copyright 2022 The thomaspinder Contributors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,12 +16,6 @@
 from itertools import product
 from typing import Any
 
-import jax
-from jax import config
-import jax.numpy as jnp
-import jax.random as jr
-import pytest
-
 from gpjax.kernels.base import AbstractKernel
 from gpjax.kernels.computations import AbstractKernelComputation
 from gpjax.kernels.nonstationary import (
@@ -34,6 +28,11 @@ from gpjax.parameters import (
     NonNegativeReal,
     Parameter,
 )
+import jax
+from jax import config
+import jax.numpy as jnp
+import jax.random as jr
+import pytest
 
 # Enable Float64 for more stable matrix inversions.
 config.update("jax_enable_x64", True)
@@ -99,7 +98,7 @@ def test_init_override_paramtype(kernel_request):
     k = kernel(**new_params, variance=NonNegativeReal(variance))
     assert isinstance(k.variance, NonNegativeReal)
 
-    for param in params.keys():
+    for param in params:
         if param in ("degree", "order"):
             continue
         # Parameter is now a raw value, not a Static object
@@ -124,7 +123,7 @@ def test_init_variances(kernel: type[AbstractKernel], variance):
 
     # Check that the parameters are set correctly
     assert isinstance(k.variance, NonNegativeReal)
-    assert jnp.allclose(k.variance.value, jnp.asarray(variance))
+    assert jnp.allclose(k.variance[...], jnp.asarray(variance))
 
     # Check that error is raised if variance is not valid
     with pytest.raises(ValueError):
@@ -196,7 +195,7 @@ def test_arccosine_special_case(order: int):
     Kab_exact = kernel.cross_covariance(a, b)
 
     # calc cross-covariance using samples
-    weights = jax.random.normal(jr.PRNGKey(123), (10_000, 2))  # [S, d]
+    weights = jax.random.normal(jr.key(123), (10_000, 2))  # [S, d]
     weights_a = jnp.matmul(weights, a.T)  # [S, 1]
     weights_b = jnp.matmul(weights, b.T)  # [S, 1]
     H_a = jnp.heaviside(weights_a, 0.5)

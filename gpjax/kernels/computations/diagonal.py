@@ -1,4 +1,4 @@
-# Copyright 2022 The JaxGaussianProcesses Contributors. All Rights Reserved.
+# Copyright 2022 The thomaspinder Contributors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@ import beartype.typing as tp
 from jax import vmap
 from jaxtyping import Float
 
-import gpjax  # noqa: F401
 from gpjax.kernels.computations import AbstractKernelComputation
 from gpjax.linalg import (
     Diagonal,
@@ -26,7 +25,7 @@ from gpjax.linalg import (
 )
 from gpjax.typing import Array
 
-Kernel = tp.TypeVar("Kernel", bound="gpjax.kernels.base.AbstractKernel")  # noqa: F821
+Kernel = tp.TypeVar("Kernel", bound="gpjax.kernels.base.AbstractKernel")
 
 
 class DiagonalKernelComputation(AbstractKernelComputation):

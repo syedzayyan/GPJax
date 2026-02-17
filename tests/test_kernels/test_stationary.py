@@ -1,4 +1,4 @@
-# Copyright 2022 The JaxGaussianProcesses Contributors. All Rights Reserved.
+# Copyright 2022 The thomaspinder Contributors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,11 +15,6 @@
 
 from itertools import product
 from typing import Any
-
-import jax
-from jax import config
-import jax.numpy as jnp
-import pytest
 
 from gpjax.kernels.computations import AbstractKernelComputation
 from gpjax.kernels.stationary import (
@@ -39,6 +34,10 @@ from gpjax.parameters import (
     Parameter,
     PositiveReal,
 )
+import jax
+from jax import config
+import jax.numpy as jnp
+import pytest
 
 # Enable Float64 for more stable matrix inversions.
 config.update("jax_enable_x64", True)
@@ -114,7 +113,7 @@ def test_init_override_paramtype(kernel_request):
     k = kernel(**kwargs)
     assert isinstance(k.variance, NonNegativeReal)
 
-    for param in params.keys():
+    for param in params:
         # Parameter is now a raw value, not a Static object
         assert not isinstance(getattr(k, param), Parameter)
 
@@ -142,7 +141,7 @@ def test_init_lengthscales(kernel: type[StationaryKernel], lengthscale):
 
     # Check that the parameters are set correctly
     assert isinstance(k.lengthscale, PositiveReal)
-    assert jnp.allclose(k.lengthscale.value, jnp.asarray(lengthscale))
+    assert jnp.allclose(k.lengthscale[...], jnp.asarray(lengthscale))
 
     # Check that error is raised if lengthscale is not valid
     with pytest.raises(ValueError):
@@ -170,7 +169,7 @@ def test_init_variances(kernel: type[StationaryKernel], variance):
 
     # Check that the parameters are set correctly
     assert isinstance(k.variance, NonNegativeReal)
-    assert jnp.allclose(k.variance.value, jnp.asarray(variance))
+    assert jnp.allclose(k.variance[...], jnp.asarray(variance))
 
     # Check that error is raised if variance is not valid
     with pytest.raises(ValueError):

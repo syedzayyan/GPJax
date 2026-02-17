@@ -1,8 +1,8 @@
 site_name: GPJax
 site_description: The documentation for the GPJax software library.
 site_url: https://docs.jaxgaussianprocesses.com/
-repo_url: https://github.com/JaxGaussianProcesses/GPJax
-repo_name: JaxGaussianProcesses/GPJax
+repo_url: https://github.com/thomaspinder/GPJax
+repo_name: thomaspinder/GPJax
 
 # edit_uri: ""
 
@@ -26,7 +26,14 @@ nav:
     - Graph kernels: _examples/graph_kernels.md
     - Sparse GPs: _examples/collapsed_vi.md
     - Stochastic sparse GPs: _examples/uncollapsed_vi.md
-    - Multi-output GPs for Ocean Modelling: _examples/oceanmodelling.md
+    - Vector-Field GPs : _examples/oceanmodelling.md
+    - Heteroscedastic Inference: _examples/heteroscedastic_inference.md
+    - Multi-Output GPs: _examples/multioutput.md
+    - Accelerated Multi-Output GPs: _examples/oilmm.md
+    - Orthogonal Additive GPs: _examples/oak.md
+  - 🧪 Experimental:
+    - Numpyro Integration: _examples/numpyro_integration.md
+    - Spatial Linear Gaussian Process: _examples/spatial_linear_gp.md
   - 📖 Guides for customisation:
     - Kernels: _examples/constructing_new_kernels.md
     - Likelihoods: _examples/likelihoods_guide.md
@@ -39,13 +46,23 @@ nav:
     - 📨 Contact: https://jaxgaussianprocesses.com/contact/
   - 📕 Reference: api/
 
+validation:
+  nav:
+    omitted_files: info
+    not_found: warn
+    absolute_links: info
+  links:
+    not_found: warn
+    anchors: info
+    absolute_links: info
+    unrecognized_links: info
 
 theme:
   name: material
   palette:
     # Palette toggle for light mode
     - media: "(prefers-color-scheme: light)"
-      scheme: custom 
+      scheme: custom
       toggle:
         icon: material/weather-night
         name: Switch to dark mode
@@ -107,10 +124,9 @@ plugins:
       handlers:
         python:
           paths: ["gpjax"]
-          rendering:
+          options:
             show_symbol_type_toc: true
             show_signature_annotations: true
-          options:
             members_order: source
             inherited_members: true
             show_source: false

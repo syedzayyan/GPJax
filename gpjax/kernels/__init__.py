@@ -1,4 +1,4 @@
-# Copyright 2022 The JaxGaussianProcesses Contributors. All Rights Reserved.
+# Copyright 2022 The thomaspinder Contributors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,6 +16,9 @@
 """JaxKern."""
 
 from gpjax.kernels import stationary
+from gpjax.kernels.additive import (
+    OrthogonalAdditiveKernel,
+)
 from gpjax.kernels.approximations import RFF
 from gpjax.kernels.base import (
     AbstractKernel,
@@ -29,6 +32,12 @@ from gpjax.kernels.computations import (
     DenseKernelComputation,
     DiagonalKernelComputation,
     EigenKernelComputation,
+)
+from gpjax.kernels.multioutput import (
+    ICMKernel,
+    LCMKernel,
+    MultiOutputKernel,
+    MultiOutputKernelComputation,
 )
 from gpjax.kernels.non_euclidean import GraphKernel
 from gpjax.kernels.nonstationary import (
@@ -48,27 +57,32 @@ from gpjax.kernels.stationary import (
 )
 
 __all__ = [
+    "RBF",
+    "RFF",
     "AbstractKernel",
     "ArcCosine",
+    "BasisFunctionComputation",
     "Constant",
-    "RBF",
+    "ConstantDiagonalKernelComputation",
+    "DenseKernelComputation",
+    "DiagonalKernelComputation",
+    "EigenKernelComputation",
     "GraphKernel",
+    "ICMKernel",
+    "LCMKernel",
+    "Linear",
     "Matern12",
     "Matern32",
     "Matern52",
-    "Linear",
-    "Polynomial",
-    "ProductKernel",
-    "SumKernel",
-    "DenseKernelComputation",
-    "DiagonalKernelComputation",
-    "ConstantDiagonalKernelComputation",
-    "EigenKernelComputation",
-    "PoweredExponential",
+    "MultiOutputKernel",
+    "MultiOutputKernelComputation",
+    "OrthogonalAdditiveKernel",
     "Periodic",
+    "Polynomial",
+    "PoweredExponential",
+    "ProductKernel",
     "RationalQuadratic",
+    "SumKernel",
     "White",
-    "BasisFunctionComputation",
-    "RFF",
     "stationary",
 ]

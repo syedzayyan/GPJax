@@ -13,11 +13,14 @@
 # limitations under the License.
 # ==============================================================================
 
-from typing import (
-    Callable,
-    Tuple,
-)
+from collections.abc import Callable
 
+from gpjax.likelihoods import (
+    Bernoulli,
+    Gaussian,
+    Poisson,
+    inv_probit,
+)
 from jax import config
 import jax.numpy as jnp
 import jax.random as jr
@@ -29,13 +32,6 @@ import numpy as np
 import numpyro.distributions as npd
 import pytest
 
-from gpjax.likelihoods import (
-    Bernoulli,
-    Gaussian,
-    Poisson,
-    inv_probit,
-)
-
 # Enable Float64 for more stable matrix inversions.
 config.update("jax_enable_x64", True)
 _initialise_key = jr.key(123)
@@ -43,7 +39,7 @@ _initialise_key = jr.key(123)
 
 def _compute_latent_dist(
     n: int,
-) -> Tuple[npd.MultivariateNormal, Float[Array, " N"], Float[Array, "N N"]]:
+) -> tuple[npd.MultivariateNormal, Float[Array, " N"], Float[Array, "N N"]]:
     k1, k2 = jr.split(_initialise_key)
     latent_mean = jr.uniform(k1, shape=(n,))
     latent_sqrt = jr.uniform(k2, shape=(n, n))
@@ -68,7 +64,7 @@ def test_gaussian_likelihood(n: int, obs_stddev: float):
 
     # Check predictive mean and variance.
     assert (pred_dist.mean == latent_mean).all()
-    noise_matrix = jnp.eye(likelihood.num_datapoints) * likelihood.obs_stddev.value**2
+    noise_matrix = jnp.eye(likelihood.num_datapoints) * likelihood.obs_stddev[...] ** 2
     assert np.allclose(
         pred_dist.scale_tril, jnp.linalg.cholesky(latent_cov + noise_matrix)
     )
@@ -102,10 +98,54 @@ def test_poisson_likelihood(n: int):
     assert isinstance(likelihood.link_function(x), npd.Poisson)
 
     # Construct latent function distribution.
-    latent_dist, latent_mean, latent_cov = _compute_latent_dist(n)
+    latent_dist, latent_mean, _latent_cov = _compute_latent_dist(n)
     pred_dist = likelihood(latent_dist)
     assert isinstance(pred_dist, npd.Poisson)
 
     # Check predictive mean and variance.
     rate = jnp.exp(latent_mean)
     assert (pred_dist.mean == rate).all()
+
+
+class TestMultiOutputGaussian:
+    def test_init_scalar_noise(self):
+        """Scalar obs_stddev broadcasts to [P] vector."""
+        from gpjax.likelihoods import MultiOutputGaussian
+
+        lik = MultiOutputGaussian(num_datapoints=10, num_outputs=3, obs_stddev=0.5)
+        assert lik.obs_stddev[...].shape == (3,)
+        assert jnp.allclose(lik.obs_stddev[...], jnp.full(3, 0.5))
+
+    def test_init_vector_noise(self):
+        """Vector obs_stddev is accepted directly."""
+        from gpjax.likelihoods import MultiOutputGaussian
+
+        noise = jnp.array([0.1, 0.2, 0.3])
+        lik = MultiOutputGaussian(num_datapoints=10, num_outputs=3, obs_stddev=noise)
+        assert jnp.allclose(lik.obs_stddev[...], noise)
+
+    def test_noise_vector_shape(self):
+        """noise_vector() returns [NP] in output-major order."""
+        from gpjax.likelihoods import MultiOutputGaussian
+
+        lik = MultiOutputGaussian(num_datapoints=10, num_outputs=3, obs_stddev=1.0)
+        nv = lik.noise_vector(10)
+        assert nv.shape == (30,)
+
+    def test_noise_vector_ordering(self):
+        """noise_vector() repeats per-output variance in output-major order."""
+        from gpjax.likelihoods import MultiOutputGaussian
+
+        noise = jnp.array([1.0, 2.0])
+        lik = MultiOutputGaussian(num_datapoints=3, num_outputs=2, obs_stddev=noise)
+        nv = lik.noise_vector(3)
+        # Output-major: [σ₁² repeated N, σ₂² repeated N]
+        expected = jnp.array([1.0, 1.0, 1.0, 4.0, 4.0, 4.0])
+        assert jnp.allclose(nv, expected)
+
+    def test_is_gaussian_subclass(self):
+        """MultiOutputGaussian is a Gaussian subclass for posterior dispatch."""
+        from gpjax.likelihoods import MultiOutputGaussian
+
+        lik = MultiOutputGaussian(num_datapoints=10, num_outputs=2)
+        assert isinstance(lik, Gaussian)

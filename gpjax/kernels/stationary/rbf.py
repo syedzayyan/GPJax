@@ -1,4 +1,4 @@
-# Copyright 2022 The JaxGaussianProcesses Contributors. All Rights Reserved.
+# Copyright 2022 The thomaspinder Contributors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -38,9 +38,9 @@ class RBF(StationaryKernel):
     name: str = "RBF"
 
     def __call__(self, x: Float[Array, " D"], y: Float[Array, " D"]) -> ScalarFloat:
-        x = self.slice_input(x) / self.lengthscale.value
-        y = self.slice_input(y) / self.lengthscale.value
-        K = self.variance.value * jnp.exp(-0.5 * squared_distance(x, y))
+        x = self.slice_input(x) / self.lengthscale[...]
+        y = self.slice_input(y) / self.lengthscale[...]
+        K = self.variance[...] * jnp.exp(-0.5 * squared_distance(x, y))
         return K.squeeze()
 
     @property

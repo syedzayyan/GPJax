@@ -24,12 +24,15 @@ from gpjax import (
     kernels,
     likelihoods,
     mean_functions,
+    models,
     objectives,
     parameters,
+    typing as typing,
     variational_families,
 )
 from gpjax.citation import cite
 from gpjax.dataset import Dataset
+from gpjax.distributions import GaussianDistribution
 from gpjax.fit import (
     fit,
     fit_lbfgs,
@@ -38,22 +41,25 @@ from gpjax.fit import (
 
 __license__ = "MIT"
 __description__ = "Gaussian processes in JAX and Flax"
-__url__ = "https://github.com/JaxGaussianProcesses/GPJax"
-__contributors__ = "https://github.com/JaxGaussianProcesses/GPJax/graphs/contributors"
-__version__ = "0.13.0"
+__url__ = "https://github.com/thomaspinder/GPJax"
+__contributors__ = "https://github.com/thomaspinder/GPJax/graphs/contributors"
+__version__ = "0.13.6"
 
 __all__ = [
+    "Dataset",
+    "GaussianDistribution",
+    "cite",
+    "fit",
+    "fit_lbfgs",
+    "fit_scipy",
     "gps",
     "integrators",
     "kernels",
     "likelihoods",
     "mean_functions",
+    "models",
     "objectives",
     "parameters",
+    "typing",
     "variational_families",
-    "Dataset",
-    "cite",
-    "fit",
-    "fit_lbfgs",
-    "fit_scipy",
 ]

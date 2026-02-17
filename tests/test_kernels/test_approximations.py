@@ -1,11 +1,3 @@
-from typing import Tuple
-
-import jax
-from jax import config
-import jax.numpy as jnp
-import jax.random as jr
-import pytest
-
 from gpjax.kernels.approximations import RFF
 from gpjax.kernels.nonstationary import (
     Linear,
@@ -22,6 +14,11 @@ from gpjax.kernels.stationary import (
     StationaryKernel,
 )
 from gpjax.linalg.operators import Dense
+import jax
+from jax import config
+import jax.numpy as jnp
+import jax.random as jr
+import pytest
 
 config.update("jax_enable_x64", True)
 _jitter = 1e-6
@@ -45,7 +42,7 @@ def test_frequency_sampler(
 def test_gram(
     kernel: type[StationaryKernel], num_basis_fns: int, n_dims: int, n_data: int
 ):
-    key = jr.PRNGKey(123)
+    key = jr.key(123)
     x = jr.uniform(key, shape=(n_data, 1), minval=-3.0, maxval=3.0).reshape(-1, 1)
     if n_dims > 1:
         x = jnp.hstack([x] * n_dims)
@@ -75,7 +72,7 @@ def test_cross_covariance(
     kernel: type[StationaryKernel],
     num_basis_fns: int,
     n_dims: int,
-    n_datas: Tuple[int, int],
+    n_datas: tuple[int, int],
 ):
     nd1, nd2 = n_datas
     key = jr.key(123)
@@ -161,7 +158,7 @@ def test_stochastic_init(kernel: type[StationaryKernel]):
 
     kernel = kernel(n_dims=1)
 
-    k1 = RFF(base_kernel=kernel, num_basis_fns=10, key=jr.PRNGKey(123))
-    k2 = RFF(base_kernel=kernel, num_basis_fns=10, key=jr.PRNGKey(42))
+    k1 = RFF(base_kernel=kernel, num_basis_fns=10, key=jr.key(123))
+    k2 = RFF(base_kernel=kernel, num_basis_fns=10, key=jr.key(42))
 
     assert (k1.frequencies != k2.frequencies).any()

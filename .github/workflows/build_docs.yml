@@ -13,6 +13,7 @@ permissions:
 
 jobs:
   build-docs:
+    timeout-minutes: 30
     concurrency: ci-${{ github.ref }}
     name: Build docs (${{ matrix.python-version }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -27,7 +28,7 @@ jobs:
     steps:
       # Grap the latest commit from the branch
       - name: Checkout the branch
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
 
@@ -52,16 +53,17 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
+          enable-cache: true
 
       - name: Build the documentation with MKDocs
         run: |
           conda install pandoc
-          uv sync --extra docs
+          uv sync --frozen --extra docs
           uv run python docs/scripts/gen_examples.py --execute
           uv run mkdocs build
 
       - name: Deploy Page 🚀
-        uses: JamesIves/github-pages-deploy-action@v4.7.3
+        uses: JamesIves/github-pages-deploy-action@v4.8.0
         with:
           branch: gh-pages
           folder: site

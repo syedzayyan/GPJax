@@ -1,4 +1,4 @@
-# Copyright 2022 The JaxGaussianProcesses Contributors. All Rights Reserved.
+# Copyright 2022 The thomaspinder Contributors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -75,5 +75,5 @@ class Linear(AbstractKernel):
     ) -> ScalarFloat:
         x = self.slice_input(x)
         y = self.slice_input(y)
-        K = self.variance.value * jnp.matmul(x.T, y)
+        K = self.variance[...] * jnp.matmul(x.T, y)
         return K.squeeze()

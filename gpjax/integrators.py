@@ -9,9 +9,9 @@ from gpjax.typing import Array
 
 L = tp.TypeVar(
     "L",
-    bound="gpjax.likelihoods.AbstractLikelihood",  # noqa: F821
+    bound="gpjax.likelihoods.AbstractLikelihood",
 )
-GL = tp.TypeVar("GL", bound="gpjax.likelihoods.Gaussian")  # noqa: F821
+GL = tp.TypeVar("GL", bound="gpjax.likelihoods.Gaussian")
 
 
 class AbstractIntegrator:
@@ -148,7 +148,7 @@ class AnalyticalGaussianIntegrator(AbstractIntegrator):
         Returns:
             Float[Array, 'N']: The expected log likelihood.
         """
-        obs_stddev = likelihood.obs_stddev.value.squeeze()
+        obs_stddev = likelihood.obs_stddev[...].squeeze()
         sq_error = jnp.square(y - mean)
         log2pi = jnp.log(2.0 * jnp.pi)
         val = jnp.sum(
@@ -160,6 +160,6 @@ class AnalyticalGaussianIntegrator(AbstractIntegrator):
 
 __all__ = [
     "AbstractIntegrator",
-    "GHQuadratureIntegrator",
     "AnalyticalGaussianIntegrator",
+    "GHQuadratureIntegrator",
 ]

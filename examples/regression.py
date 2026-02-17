@@ -7,7 +7,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.11.2
+#       jupytext_version: 1.19.1
 #   kernelspec:
 #     display_name: .venv
 #     language: python
@@ -29,7 +29,6 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 from examples.utils import (
-    clean_legend,
     use_mpl_style,
 )
 
@@ -121,35 +120,40 @@ prior = gpx.gps.Prior(mean_function=meanf, kernel=kernel)
 # we have just defined can be represented by a
 # [TensorFlow Probability](https://www.tensorflow.org/probability/api_docs/python/tfp/substrates/jax)
 # multivariate Gaussian distribution. Such functionality enables trivial sampling, and
-# the evaluation of the GP's mean and covariance .
+# the evaluation of the GP's mean and covariance.
+#
+# Since we want to sample from the full posterior, we need to calculate the full covariance matrix.
+# We can enforce this by including the `return_covariance_type = "dense"` attribute when predicting.
+# Note this is what will be defaulted if left blank.
 
 # %%
-prior_dist = prior.predict(xtest)
-
-prior_mean = prior_dist.mean
-prior_std = prior_dist.variance
-samples = prior_dist.sample(key=key, sample_shape=(20,))
-
-
-fig, ax = plt.subplots()
-ax.plot(xtest, samples.T, alpha=0.5, color=cols[0], label="Prior samples")
-ax.plot(xtest, prior_mean, color=cols[1], label="Prior mean")
-ax.fill_between(
-    xtest.flatten(),
-    prior_mean - prior_std,
-    prior_mean + prior_std,
-    alpha=0.3,
-    color=cols[1],
-    label="Prior variance",
-)
-ax.legend(loc="best")
-ax = clean_legend(ax)
+# %% [markdown]
+# prior_dist = prior.predict(xtest, return_covariance_type="dense")
+#
+# prior_mean = prior_dist.mean
+# prior_std = prior_dist.variance
+# samples = prior_dist.sample(key=key, sample_shape=(20,))
+#
+#
+# fig, ax = plt.subplots()
+# ax.plot(xtest, samples.T, alpha=0.5, color=cols[0], label="Prior samples")
+# ax.plot(xtest, prior_mean, color=cols[1], label="Prior mean")
+# ax.fill_between(
+#     xtest.flatten(),
+#     prior_mean - prior_std,
+#     prior_mean + prior_std,
+#     alpha=0.3,
+#     color=cols[1],
+#     label="Prior variance",
+# )
+# ax.legend(loc="best")
+# ax = clean_legend(ax)
 
 # %% [markdown]
 # ## Constructing the posterior
 #
 # Having defined our GP, we proceed to define a description of our data
-# $\mathcal{D}$ conditional on our knowledge of $f(\cdot)$ --- this is exactly the
+# $\mathcal{D}$ conditional on our knowledge of $f(\cdot)$ - this is exactly the
 # notion of a likelihood function $p(\mathcal{D} | f(\cdot))$. While the choice of
 # likelihood is a critical in Bayesian modelling, for simplicity we consider a
 # Gaussian with noise parameter $\alpha$
@@ -212,9 +216,15 @@ print(-gpx.objectives.conjugate_mll(opt_posterior, D))
 # this, we use our defined `posterior` and `likelihood` at our test inputs to obtain
 # the predictive distribution as a `Distrax` multivariate Gaussian upon which `mean`
 # and `stddev` can be used to extract the predictive mean and standard deviatation.
+#
+# We are only concerned here about the variance between the test points and themselves, so
+# we can just copute the diagonal version of the covariance.  We enforce this by using
+# `return_covariance_type = "diagonal"` in the `predict` call.
 
 # %%
-latent_dist = opt_posterior.predict(xtest, train_data=D)
+latent_dist = opt_posterior.predict(
+    xtest, train_data=D, return_covariance_type="diagonal"
+)
 predictive_dist = opt_posterior.likelihood(latent_dist)
 
 predictive_mean = predictive_dist.mean

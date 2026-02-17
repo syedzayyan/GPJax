@@ -1,7 +1,5 @@
 """Linear algebra operations for GPJax LinearOperators."""
 
-from typing import Union
-
 from jax import Array
 import jax.numpy as jnp
 import jax.scipy as jsp
@@ -72,8 +70,8 @@ def lower_cholesky(A: LinearOperator) -> LinearOperator:
 
 def solve(
     A: LinearOperator,
-    b: Union[Float[Array, " N"], Float[Array, " N M"]],
-) -> Union[Float[Array, " N"], Float[Array, " N M"]]:
+    b: Float[Array, " N"] | Float[Array, " N M"],
+) -> Float[Array, " N"] | Float[Array, " N M"]:
     """Solve the linear system A @ x = b for x.
 
     This function dispatches on the type of the input LinearOperator to provide

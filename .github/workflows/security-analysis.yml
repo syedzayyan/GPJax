@@ -17,10 +17,11 @@ jobs:
   dependency-scan:
     name: Dependency Vulnerability Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Set up Python
       uses: actions/setup-python@v6
@@ -31,23 +32,26 @@ jobs:
       uses: astral-sh/setup-uv@v7
       with:
         version: "latest"
+        enable-cache: true
 
     - name: Install dependencies
       run: |
-        uv sync --extra dev
+        uv sync --frozen
 
     - name: Run safety check
+      continue-on-error: true
       run: |
         uv add safety
-        uv run safety check --json --output safety-report.json || true
+        uv run safety check --json --output safety-report.json
 
     - name: Run bandit security linter
+      continue-on-error: true
       run: |
         uv add bandit[toml]
-        uv run bandit -r gpjax/ -f json -o bandit-report.json || true
+        uv run bandit -r gpjax/ -f json -o bandit-report.json -ll
 
     - name: Upload dependency scan results
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       if: always()
       with:
         name: security-scan-results
@@ -59,10 +63,11 @@ jobs:
   secrets-scan:
     name: Secrets Detection
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
       with:
         fetch-depth: 0  # Fetch full history for comprehensive scanning
 

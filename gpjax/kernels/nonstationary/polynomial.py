@@ -1,4 +1,4 @@
-# Copyright 2022 The JaxGaussianProcesses Contributors. All Rights Reserved.
+# Copyright 2022 The thomaspinder Contributors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -85,9 +85,13 @@ class Polynomial(AbstractKernel):
     def __call__(self, x: Float[Array, " D"], y: Float[Array, " D"]) -> ScalarFloat:
         x = self.slice_input(x)
         y = self.slice_input(y)
-        shift_val = self.shift.value if hasattr(self.shift, "value") else self.shift
+        shift_val = (
+            self.shift[...] if isinstance(self.shift, nnx.Variable) else self.shift
+        )
         variance_val = (
-            self.variance.value if hasattr(self.variance, "value") else self.variance
+            self.variance[...]
+            if isinstance(self.variance, nnx.Variable)
+            else self.variance
         )
         K = jnp.power(shift_val + variance_val * jnp.dot(x, y), self.degree)
         return K.squeeze()

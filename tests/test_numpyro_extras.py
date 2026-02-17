@@ -1,203 +1,425 @@
-from jax import (
-    grad,
-    jit,
+from flax import nnx
+from gpjax.numpyro_extras import (
+    register_parameters,
+    resolve_prior,
+    tree_path_to_name,
 )
+from gpjax.parameters import (
+    LowerTriangular,
+    NonNegativeReal,
+    PositiveReal,
+    Real,
+    SigmoidBounded,
+)
+from hypothesis import (
+    given,
+    strategies as st,
+)
+from hypothesis.extra.numpy import arrays
 import jax.numpy as jnp
+import jax.tree_util as jtu
 import numpy as np
-import pytest
-
-from gpjax.numpyro_extras import FillTriangularTransform
-
-
-# Helper function to generate a test input vector for a given matrix size.
-def generate_test_vector(n):
-    """
-    Generate a sequential vector of shape (n(n+1)/2,) with values [1, 2, ..., n(n+1)/2].
-    """
-    L = n * (n + 1) // 2
-    return jnp.arange(1, L + 1, dtype=jnp.float32)
+import numpyro.distributions as dist
+from numpyro.handlers import (
+    seed,
+    trace,
+)
 
 
-# ----------------- Unit tests using PyTest -----------------
+def valid_shapes(min_dims=0, max_dims=2):
+    return st.integers(min_dims, max_dims).flatmap(
+        lambda d: st.lists(st.integers(1, 3), min_size=d, max_size=d).map(tuple)
+    )
 
 
-@pytest.mark.parametrize("n", [1, 2, 3, 4])
-def test_forward_inverse(n):
-    """
-    Test that for a range of input sizes the forward transform correctly fills
-    an n x n lower triangular matrix and that the inverse recovers the original vector.
-    """
-    ft = FillTriangularTransform()
-    vec = generate_test_vector(n)
-    L = ft(vec)
-
-    # Construct the expected n x n lower triangular matrix
-    expected = jnp.zeros((n, n), dtype=vec.dtype)
-    row, col = jnp.tril_indices(n)
-    expected = expected.at[row, col].set(vec)
-
-    np.testing.assert_allclose(L, expected, rtol=1e-6)
-
-    # Check that the inverse recovers the original vector
-    vec_rec = ft.inv(L)
-    np.testing.assert_allclose(vec, vec_rec, rtol=1e-6)
+def real_arrays(shape=None, min_value=None, max_value=None):
+    return arrays(
+        dtype=np.float64,
+        shape=shape if shape is not None else valid_shapes(),
+        elements=st.floats(
+            min_value=min_value,
+            max_value=max_value,
+            allow_nan=False,
+            allow_infinity=False,
+            width=64,
+        ),
+    ).map(jnp.array)
 
 
-@pytest.mark.parametrize("n", [1, 2, 3, 4])
-def test_batched_forward_inverse(n):
-    """
-    Test that the transform correctly handles batched inputs.
-    """
-    ft = FillTriangularTransform()
-    batch_size = 5
-    vec = jnp.stack([generate_test_vector(n) for _ in range(batch_size)], axis=0)
-    L = ft(vec)  # Expected shape: (batch_size, n, n)
-    assert L.shape == (batch_size, n, n)
-
-    vec_rec = ft.inv(L)  # Expected shape: (batch_size, n(n+1)/2)
-    assert vec_rec.shape == (batch_size, n * (n + 1) // 2)
-    np.testing.assert_allclose(vec, vec_rec, rtol=1e-6)
+def lower_triangular_matrices(n=2):
+    return arrays(
+        dtype=np.float64,
+        shape=(n, n),
+        elements=st.floats(min_value=-2.0, max_value=2.0, width=64),
+    ).map(lambda x: jnp.tril(jnp.array(x)))
 
 
-def test_jit_forward():
-    """
-    Test that the forward transformation works correctly when compiled with JIT.
-    """
-    ft = FillTriangularTransform()
-    n = 3
-    vec = generate_test_vector(n)
-
-    jit_forward = jit(ft)
-    L = ft(vec)
-    L_jit = jit_forward(vec)
-    np.testing.assert_allclose(L, L_jit, rtol=1e-6)
-
-
-def test_jit_inverse():
-    """
-    Test that the inverse transformation works correctly when compiled with JIT.
-    """
-    ft = FillTriangularTransform()
-    n = 3
-    vec = generate_test_vector(n)
-    L_mat = ft(vec)
-
-    # Wrap the inverse call in a lambda to avoid hashing the unhashable _InverseTransform.
-    jit_inverse = jit(lambda y: ft.inv(y))
-    vec_rec = ft.inv(L_mat)
-    vec_rec_jit = jit_inverse(L_mat)
-    np.testing.assert_allclose(vec_rec, vec_rec_jit, rtol=1e-6)
+class FlexibleMockModel(nnx.Module):
+    def __init__(
+        self,
+        pos_val,
+        real_val,
+        non_neg_val,
+        sigmoid_val,
+        lower_val,
+        vec_val,
+        pos_prior=None,
+        real_prior=None,
+        non_neg_prior=None,
+        sigmoid_prior=None,
+        lower_prior=None,
+        vec_prior=None,
+    ):
+        self.pos = PositiveReal(pos_val, prior=pos_prior)
+        self.real = Real(real_val, prior=real_prior)
+        self.non_neg = NonNegativeReal(non_neg_val, prior=non_neg_prior)
+        self.sigmoid = SigmoidBounded(sigmoid_val, prior=sigmoid_prior)
+        self.lower = LowerTriangular(lower_val, prior=lower_prior)
+        self.vec = Real(vec_val, prior=vec_prior)
 
 
-def test_grad_forward():
-    """
-    Test that JAX gradients can be computed for the forward transform.
-    We define a simple function that sums the output matrix.
-    Since the forward transform is just a reordering, the gradient should be 1
-    for every element in the input vector.
-    """
-    ft = FillTriangularTransform()
-    n = 3
-    vec = generate_test_vector(n)
+@given(
+    pos_val=real_arrays(shape=(1,), min_value=1e-3, max_value=10.0),
+    real_val=real_arrays(shape=(1,), min_value=-10.0, max_value=10.0),
+    non_neg_val=real_arrays(shape=(1,), min_value=0.0, max_value=10.0),
+    sigmoid_val=real_arrays(shape=(1,), min_value=1e-3, max_value=0.999),
+    lower_val=lower_triangular_matrices(n=2),
+    vec_val=real_arrays(shape=(2,), min_value=-10.0, max_value=10.0),
+)
+def test_no_priors_no_sampling(
+    pos_val, real_val, non_neg_val, sigmoid_val, lower_val, vec_val
+):
+    model = FlexibleMockModel(
+        pos_val, real_val, non_neg_val, sigmoid_val, lower_val, vec_val
+    )
 
-    # Define a scalar function f(x) = sum(forward(x))
-    f = lambda x: jnp.sum(ft(x))
-    grad_f = grad(f)(vec)
-    np.testing.assert_allclose(grad_f, jnp.ones_like(vec), rtol=1e-6)
+    def model_fn():
+        return register_parameters(model)
 
+    with seed(rng_seed=0):
+        tr = trace(model_fn).get_trace()
 
-def test_grad_inverse():
-    """
-    Test that gradients flow through the inverse transformation.
-    Define a simple scalar function on the inverse such that g(y) = sum(inv(y)).
-    The gradient with respect to y should be one on the lower triangular indices.
-    """
-    ft = FillTriangularTransform()
-    n = 3
-    vec = generate_test_vector(n)
-    L = ft(vec)
-
-    g = lambda y: jnp.sum(ft.inv(y))
-    grad_g = grad(g)(L)
-
-    # Construct the expected gradient matrix: zeros everywhere except ones on the lower triangle.
-    grad_expected = jnp.zeros_like(L)
-    row, col = jnp.tril_indices(n)
-    grad_expected = grad_expected.at[row, col].set(1.0)
-    np.testing.assert_allclose(grad_g, grad_expected, rtol=1e-6)
+    # Should be empty because no priors were attached or passed
+    assert len(tr) == 0
 
 
-def test_invalid_dimension_error():
-    """
-    Test that the FillTriangularTransform correctly raises a ValueError when
-    the last dimension doesn't equal n(n+1)/2 for some integer n.
-    """
-    ft = FillTriangularTransform()
+@given(
+    pos_val=real_arrays(shape=(1,), min_value=1e-3, max_value=10.0),
+    real_val=real_arrays(shape=(1,), min_value=-10.0, max_value=10.0),
+    non_neg_val=real_arrays(shape=(1,), min_value=0.0, max_value=10.0),
+    sigmoid_val=real_arrays(shape=(1,), min_value=1e-3, max_value=0.999),
+    lower_val=lower_triangular_matrices(n=2),
+    vec_val=real_arrays(shape=(2,), min_value=-10.0, max_value=10.0),
+)
+def test_explicit_priors_sampling(
+    pos_val, real_val, non_neg_val, sigmoid_val, lower_val, vec_val
+):
+    model = FlexibleMockModel(
+        pos_val, real_val, non_neg_val, sigmoid_val, lower_val, vec_val
+    )
 
-    # Create vectors with invalid dimensions that aren't n(n+1)/2 for any integer n
-    invalid_dims = [2, 4, 5, 7, 8, 11, 13, 14, 17, 19, 20]
+    # Define priors compatible with shapes
+    priors = {
+        "pos": dist.LogNormal(0.0, 1.0).expand(pos_val.shape).to_event(pos_val.ndim),
+        "real": dist.Normal(0.0, 1.0).expand(real_val.shape).to_event(real_val.ndim),
+        "non_neg": dist.LogNormal(0.0, 1.0)
+        .expand(non_neg_val.shape)
+        .to_event(non_neg_val.ndim),
+        "sigmoid": dist.Uniform(0.0, 1.0)
+        .expand(sigmoid_val.shape)
+        .to_event(sigmoid_val.ndim),
+        # For LowerTriangular, user must provide a prior over the full matrix shape
+        # OR a transformed prior. Here we simulate providing a prior over the full shape
+        # just to ensure the site is registered.
+        "lower": dist.Normal(0.0, 1.0).expand(lower_val.shape).to_event(lower_val.ndim),
+        "vec": dist.Normal(0.0, 1.0).expand(vec_val.shape).to_event(vec_val.ndim),
+    }
 
-    for dim in invalid_dims:
-        vec = jnp.ones(dim)
-        with pytest.raises(
-            ValueError,
-            match="Last dimension must equal n\\(n\\+1\\)/2 for some integer n\\.",
-        ):
-            ft(vec)
+    def model_fn():
+        return register_parameters(model, priors=priors)
 
-    # Verify that valid dimensions don't raise errors
-    valid_dims = [1, 3, 6, 10, 15, 21]  # n(n+1)/2 for n=1,2,3,4,5,6
+    with seed(rng_seed=0):
+        tr = trace(model_fn).get_trace()
 
-    for dim in valid_dims:
-        vec = jnp.ones(dim)
-        try:
-            ft(vec)
-        except ValueError:
-            pytest.fail(
-                f"FillTriangularTransform raised ValueError for valid dimension {dim}"
+    assert "pos" in tr
+    assert "real" in tr
+    assert "non_neg" in tr
+    assert "sigmoid" in tr
+    assert "lower" in tr
+    assert "vec" in tr
+
+
+@given(
+    pos_val=real_arrays(shape=(1,), min_value=1e-3, max_value=10.0),
+    real_val=real_arrays(shape=(1,), min_value=-10.0, max_value=10.0),
+    non_neg_val=real_arrays(shape=(1,), min_value=0.0, max_value=10.0),
+    sigmoid_val=real_arrays(shape=(1,), min_value=1e-3, max_value=0.999),
+    lower_val=lower_triangular_matrices(n=2),
+    vec_val=real_arrays(shape=(2,), min_value=-10.0, max_value=10.0),
+)
+def test_attached_priors_sampling(
+    pos_val, real_val, non_neg_val, sigmoid_val, lower_val, vec_val
+):
+    # Create priors
+    pos_prior = dist.LogNormal(0.0, 1.0).expand(pos_val.shape).to_event(pos_val.ndim)
+    real_prior = dist.Normal(0.0, 1.0).expand(real_val.shape).to_event(real_val.ndim)
+    # Attach only to a subset to verify mixed behavior
+    model = FlexibleMockModel(
+        pos_val,
+        real_val,
+        non_neg_val,
+        sigmoid_val,
+        lower_val,
+        vec_val,
+        pos_prior=pos_prior,
+        real_prior=real_prior,
+    )
+
+    def model_fn():
+        return register_parameters(model)
+
+    with seed(rng_seed=0):
+        tr = trace(model_fn).get_trace()
+
+    assert "pos" in tr
+    assert "real" in tr
+    assert "non_neg" not in tr
+    assert "vec" not in tr
+
+
+@given(
+    pos_val=real_arrays(shape=(1,), min_value=1e-3, max_value=10.0),
+)
+def test_prior_precedence(pos_val):
+    # Attached prior
+    attached_prior = dist.Gamma(2.0, 1.0).expand(pos_val.shape).to_event(pos_val.ndim)
+
+    # Explicit prior (different)
+    explicit_prior = dist.Exponential(1.0).expand(pos_val.shape).to_event(pos_val.ndim)
+
+    # Model with attached prior
+    # We need dummy values for others
+    dummy_real = jnp.array([0.0])
+    dummy_lower = jnp.eye(2)
+    dummy_vec = jnp.zeros(2)
+
+    model = FlexibleMockModel(
+        pos_val,
+        dummy_real,
+        dummy_real,
+        dummy_real,
+        dummy_lower,
+        dummy_vec,
+        pos_prior=attached_prior,
+    )
+
+    priors = {"pos": explicit_prior}
+
+    def model_fn():
+        return register_parameters(model, priors=priors)
+
+    with seed(rng_seed=0):
+        tr = trace(model_fn).get_trace()
+
+    # Check that the sampled site corresponds to the explicit prior
+    # We can check the distribution object
+    # Structure might be Independent(Expanded(Exponential)) or Independent(Exponential)
+    d = tr["pos"]["fn"]
+    while hasattr(d, "base_dist"):
+        d = d.base_dist
+    assert isinstance(d, dist.Exponential)
+
+
+def test_register_parameters_nested_prefix():
+    class NestedModel(nnx.Module):
+        def __init__(self):
+            self.inner = FlexibleMockModel(
+                jnp.array([1.0]),
+                jnp.array([0.0]),
+                jnp.array([1.0]),
+                jnp.array([0.5]),
+                jnp.eye(2),
+                jnp.zeros(2),
             )
 
+    model = NestedModel()
+    # Explicit prior for nested
+    priors = {"outer.inner.pos": dist.LogNormal(0.0, 1.0).expand((1,)).to_event(1)}
 
-def test_inverse_dimension_error():
+    def model_fn():
+        return register_parameters(model, prefix="outer", priors=priors)
+
+    with seed(rng_seed=0):
+        tr = trace(model_fn).get_trace()
+
+    assert "outer.inner.pos" in tr
+    assert "outer.inner.real" not in tr
+
+
+def test_tree_path_to_name_with_getattr_key():
+    path = (jtu.GetAttrKey("kernel"), jtu.GetAttrKey("lengthscale"))
+    assert tree_path_to_name(path) == "kernel.lengthscale"
+
+
+def test_tree_path_to_name_with_dict_key():
+    path = (jtu.DictKey(key="params"), jtu.DictKey(key="variance"))
+    assert tree_path_to_name(path) == "params.variance"
+
+
+def test_tree_path_to_name_with_sequence_key():
+    path = (jtu.GetAttrKey("layers"), jtu.SequenceKey(idx=0), jtu.GetAttrKey("weight"))
+    assert tree_path_to_name(path) == "layers.0.weight"
+
+
+def test_tree_path_to_name_with_prefix():
+    path = (jtu.GetAttrKey("kernel"), jtu.GetAttrKey("variance"))
+    assert tree_path_to_name(path, prefix="model") == "model.kernel.variance"
+
+
+def test_tree_path_to_name_empty_path():
+    path = ()
+    assert tree_path_to_name(path) == ""
+
+
+def test_tree_path_to_name_empty_path_with_prefix():
+    path = ()
+    assert tree_path_to_name(path, prefix="model") == "model."
+
+
+def test_tree_path_to_name_mixed_keys():
+    path = (
+        jtu.GetAttrKey("nested"),
+        jtu.DictKey(key="sub"),
+        jtu.SequenceKey(idx=2),
+    )
+    assert tree_path_to_name(path) == "nested.sub.2"
+
+
+def test_resolve_prior_explicit_takes_precedence():
+    explicit_prior = dist.Normal(0.0, 1.0)
+    attached_prior = dist.Gamma(1.0, 1.0)
+    param = PositiveReal(jnp.array([1.0]), prior=attached_prior)
+    priors = {"my_param": explicit_prior}
+
+    result = resolve_prior("my_param", param, priors)
+    assert result is explicit_prior
+
+
+def test_resolve_prior_falls_back_to_attached():
+    attached_prior = dist.LogNormal(0.0, 1.0)
+    param = PositiveReal(jnp.array([1.0]), prior=attached_prior)
+    priors = {}
+
+    result = resolve_prior("my_param", param, priors)
+    assert result is attached_prior
+
+
+def test_resolve_prior_returns_none_when_no_prior():
+    param = Real(jnp.array([0.0]))
+    priors = {}
+
+    result = resolve_prior("my_param", param, priors)
+    assert result is None
+
+
+def test_resolve_prior_explicit_for_different_name_no_attached():
+    explicit_prior = dist.Normal(0.0, 1.0)
+    param = Real(jnp.array([0.0]))
+    priors = {"other_param": explicit_prior}
+
+    result = resolve_prior("my_param", param, priors)
+    assert result is None
+
+
+def test_register_parameters_conjugate_posterior():
+    """Integration test: register_parameters on a real ConjugatePosterior.
+
+    Verifies that:
+    - Nested modules (kernel, likelihood) are traversed correctly
+    - Shared nnx.Variable references (lengthscale shared between RBF and Periodic)
+      result in a single sample site
+    - nnx.List inside CombinationKernel is traversed properly
+    - All parameters with priors are sampled
+    - conjugate_mll can be evaluated with the sampled parameters
     """
-    Test that the FillTriangularTransform.inv correctly raises a ValueError when
-    the input has less than two dimensions.
-    """
-    ft = FillTriangularTransform()
+    import gpjax as gpx
 
-    # Create a one-dimensional array
-    vec = jnp.ones(3)  # 1D array with 3 elements
+    lengthscale_prior = dist.LogNormal(0.0, 1.0)
+    variance_prior = dist.LogNormal(0.0, 1.0)
+    period_prior = dist.LogNormal(0.0, 0.5)
+    noise_prior = dist.LogNormal(0.0, 1.0)
 
-    # Try to call inverse on the 1D array, should fail
-    with pytest.raises(
-        ValueError, match="Input to inverse must be at least two-dimensional."
-    ):
-        ft.inv(vec)
+    lengthscale = PositiveReal(1.0, prior=lengthscale_prior)
+    variance = PositiveReal(1.0, prior=variance_prior)
+    period = PositiveReal(1.0, prior=period_prior)
+    noise = NonNegativeReal(1.0, prior=noise_prior)
+
+    rbf = gpx.kernels.RBF(lengthscale=lengthscale, variance=variance)
+    periodic = gpx.kernels.Periodic(lengthscale=lengthscale, period=period)
+    kernel = rbf * periodic
+
+    meanf = gpx.mean_functions.Constant()
+    prior = gpx.gps.Prior(mean_function=meanf, kernel=kernel)
+    likelihood = gpx.likelihoods.Gaussian(num_datapoints=10, obs_stddev=noise)
+    posterior = prior * likelihood
+
+    def model_fn():
+        return register_parameters(posterior)
+
+    with seed(rng_seed=42):
+        tr = trace(model_fn).get_trace()
+
+    # Shared lengthscale should appear once (shared Variable → single site)
+    lengthscale_sites = [k for k in tr if "lengthscale" in k]
+    assert len(lengthscale_sites) == 1, (
+        f"Expected 1 lengthscale site, got {len(lengthscale_sites)}: {lengthscale_sites}"
+    )
+
+    # variance, period, and obs_stddev should each appear once
+    variance_sites = [k for k in tr if "variance" in k]
+    assert len(variance_sites) == 1
+
+    period_sites = [k for k in tr if "period" in k]
+    assert len(period_sites) == 1
+
+    obs_stddev_sites = [k for k in tr if "obs_stddev" in k]
+    assert len(obs_stddev_sites) == 1
+
+    # Total: 4 sampled sites (lengthscale, variance, period, obs_stddev)
+    assert len(tr) == 4, f"Expected 4 sample sites, got {len(tr)}: {list(tr.keys())}"
 
 
-def test_inverse_non_square_error():
-    """
-    Test that the FillTriangularTransform.inv correctly raises a ValueError when
-    the input matrix is not square.
-    """
-    ft = FillTriangularTransform()
+def test_register_parameters_conjugate_posterior_mll():
+    """Integration test: sampled parameters flow through conjugate_mll."""
+    import gpjax as gpx
+    import jax.random as jr
 
-    # Create non-square matrices of different shapes
-    non_square_matrices = [
-        jnp.ones((3, 4)),  # 3x4 matrix
-        jnp.ones((5, 2)),  # 5x2 matrix
-        jnp.ones((1, 3)),  # 1x3 matrix
-    ]
+    key = jr.key(0)
+    X = jr.uniform(key, shape=(10, 1))
+    y = jnp.sin(X)
+    D = gpx.Dataset(X=X, y=y)
 
-    for matrix in non_square_matrices:
-        # Extract dimensions
-        dim1, dim2 = matrix.shape[-2:]
-        # Use a simpler regex pattern that doesn't include parentheses
-        error_pattern = "Input matrix must be square; got shape"
-        with pytest.raises(ValueError, match=error_pattern):
-            ft.inv(matrix)
+    lengthscale = PositiveReal(1.0, prior=dist.LogNormal(0.0, 1.0))
+    variance = PositiveReal(1.0, prior=dist.LogNormal(0.0, 1.0))
+    noise = NonNegativeReal(0.5, prior=dist.LogNormal(0.0, 1.0))
 
-    # Test with batched non-square matrices
-    batched_non_square = jnp.ones((2, 3, 4))  # Batch of 2 matrices of shape 3x4
-    with pytest.raises(ValueError, match="Input matrix must be square"):
-        ft.inv(batched_non_square)
+    kernel = gpx.kernels.RBF(lengthscale=lengthscale, variance=variance)
+    meanf = gpx.mean_functions.Constant()
+    prior = gpx.gps.Prior(mean_function=meanf, kernel=kernel)
+    likelihood = gpx.likelihoods.Gaussian(num_datapoints=10, obs_stddev=noise)
+    posterior = prior * likelihood
+
+    mll_value = None
+
+    def model_fn():
+        nonlocal mll_value
+        p = register_parameters(posterior)
+        mll_value = gpx.objectives.conjugate_mll(p, D)
+        return mll_value
+
+    with seed(rng_seed=42):
+        tr = trace(model_fn).get_trace()
+
+    assert len(tr) == 3  # lengthscale, variance, obs_stddev
+    assert mll_value is not None
+    assert jnp.isfinite(mll_value)

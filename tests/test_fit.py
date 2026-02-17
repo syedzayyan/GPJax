@@ -1,4 +1,4 @@
-# Copyright 2023 The JaxGaussianProcesses Contributors. All Rights Reserved.
+# Copyright 2023 The thomaspinder Contributors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,16 +15,6 @@
 
 from beartype.typing import Any
 from flax import nnx
-import jax.numpy as jnp
-import jax.random as jr
-from jaxtyping import (
-    Float,
-    Num,
-)
-import optax as ox
-import pytest
-import scipy
-
 import gpjax as gpx
 from gpjax.dataset import Dataset
 from gpjax.fit import (
@@ -59,6 +49,15 @@ from gpjax.parameters import (
 )
 from gpjax.typing import Array
 from gpjax.variational_families import VariationalGaussian
+import jax.numpy as jnp
+import jax.random as jr
+from jaxtyping import (
+    Float,
+    Num,
+)
+import optax as ox
+import pytest
+import scipy
 
 
 def test_fit_simple() -> None:
@@ -75,7 +74,7 @@ def test_fit_simple() -> None:
             self.bias = bias
 
         def __call__(self, x):
-            return self.weight.value * x + self.bias
+            return self.weight[...] * x + self.bias
 
     model = LinearModel(weight=1.0, bias=1.0)
 
@@ -110,7 +109,7 @@ def test_fit_simple() -> None:
 def test_fit_scipy_simple():
     # Create dataset:
     X = jnp.linspace(0.0, 10.0, 100).reshape(-1, 1)
-    y = 2.0 * X + 1.0 + 10 * jr.normal(jr.PRNGKey(0), X.shape).reshape(-1, 1)
+    y = 2.0 * X + 1.0 + 10 * jr.normal(jr.key(0), X.shape).reshape(-1, 1)
     D = Dataset(X, y)
 
     # Define linear model:
@@ -120,7 +119,7 @@ def test_fit_scipy_simple():
             self.bias = bias
 
         def __call__(self, x):
-            return self.weight.value * x + self.bias
+            return self.weight[...] * x + self.bias
 
     model = LinearModel(weight=1.0, bias=1.0)
 
@@ -153,7 +152,7 @@ def test_fit_scipy_simple():
 def test_fit_lbfgs_simple():
     # Create dataset:
     X = jnp.linspace(0.0, 10.0, 100).reshape(-1, 1)
-    y = 2.0 * X + 1.0 + 10 * jr.normal(jr.PRNGKey(0), X.shape).reshape(-1, 1)
+    y = 2.0 * X + 1.0 + 10 * jr.normal(jr.key(0), X.shape).reshape(-1, 1)
     D = Dataset(X, y)
 
     # Define linear model:
@@ -163,7 +162,7 @@ def test_fit_lbfgs_simple():
             self.bias = bias
 
         def __call__(self, x):
-            return self.weight.value * x + self.bias
+            return self.weight[...] * x + self.bias
 
     model = LinearModel(weight=1.0, bias=1.0)
 
@@ -173,7 +172,7 @@ def test_fit_lbfgs_simple():
         return jnp.mean((pred - data.y) ** 2)
 
     # Train with bfgs!
-    trained_model, final_loss = fit_lbfgs(
+    trained_model, _final_loss = fit_lbfgs(
         model=model,
         objective=mse,
         train_data=D,
@@ -194,7 +193,7 @@ def test_fit_lbfgs_simple():
 @pytest.mark.parametrize("verbose", [True, False])
 def test_fit_gp_regression(n_data: int, verbose: bool) -> None:
     # Create dataset:
-    key = jr.PRNGKey(123)
+    key = jr.key(123)
     x = jnp.sort(
         jr.uniform(key=key, minval=-2.0, maxval=2.0, shape=(n_data, 1)), axis=0
     )
@@ -214,7 +213,7 @@ def test_fit_gp_regression(n_data: int, verbose: bool) -> None:
         optim=ox.adam(0.1),
         num_iters=15,
         verbose=verbose,
-        key=jr.PRNGKey(123),
+        key=jr.key(123),
     )
 
     # Ensure the trained model is a Gaussian process posterior
@@ -230,7 +229,7 @@ def test_fit_gp_regression(n_data: int, verbose: bool) -> None:
 @pytest.mark.parametrize("n_data", [20])
 def test_fit_lbfgs_gp_regression(n_data: int) -> None:
     # Create dataset:
-    key = jr.PRNGKey(123)
+    key = jr.key(123)
     x = jnp.sort(
         jr.uniform(key=key, minval=-2.0, maxval=2.0, shape=(n_data, 1)), axis=0
     )
@@ -243,7 +242,7 @@ def test_fit_lbfgs_gp_regression(n_data: int) -> None:
     posterior = prior * likelihood
 
     # Train with BFGS!
-    trained_model_bfgs, final_loss = fit_lbfgs(
+    trained_model_bfgs, _final_loss = fit_lbfgs(
         model=posterior,
         objective=conjugate_mll,
         train_data=D,
@@ -380,7 +379,7 @@ def valid_model() -> nnx.Module:
             self.bias = bias
 
         def __call__(self, x: Any) -> Any:
-            return self.weight.value * x + self.bias
+            return self.weight[...] * x + self.bias
 
     return LinearModel(weight=1.0, bias=1.0)
 
@@ -402,7 +401,7 @@ def test_check_model_invalid() -> None:
     """Test that an invalid model raises a TypeError."""
     model = "not a model"
     with pytest.raises(
-        TypeError, match="Expected model to be a subclass of nnx.Module"
+        TypeError, match=r"Expected model to be a subclass of nnx\.Module"
     ):
         _check_model(model)
 
@@ -416,7 +415,7 @@ def test_check_train_data_invalid() -> None:
     """Test that invalid training data raises a TypeError."""
     train_data = "not a dataset"
     with pytest.raises(
-        TypeError, match="Expected train_data to be of type gpjax.Dataset"
+        TypeError, match=r"Expected train_data to be of type gpjax\.Dataset"
     ):
         _check_train_data(train_data)
 
@@ -431,7 +430,7 @@ def test_check_optim_invalid() -> None:
     """Test that an invalid optimiser raises a TypeError."""
     optim = "not an optimiser"
     with pytest.raises(
-        TypeError, match="Expected optim to be of type optax.GradientTransformation"
+        TypeError, match=r"Expected optim to be of type optax\.GradientTransformation"
     ):
         _check_optim(optim)
 
@@ -524,7 +523,7 @@ def test_fit_filter_freeze_kernel_variance() -> None:
     posterior = prior * likelihood
 
     # Record initial variance value
-    initial_variance = kernel.variance.value
+    initial_variance = kernel.variance[...]
 
     # Train with filter that excludes variance (freezes it)
     filter_no_variance = nnx.filterlib.Not(nnx.filterlib.PathContains("variance"))
@@ -539,10 +538,10 @@ def test_fit_filter_freeze_kernel_variance() -> None:
     )
 
     # Assert variance has not changed
-    assert jnp.allclose(trained_posterior.prior.kernel.variance.value, initial_variance)
+    assert jnp.allclose(trained_posterior.prior.kernel.variance[...], initial_variance)
 
     # Assert lengthscale has changed
-    assert not jnp.allclose(trained_posterior.prior.kernel.lengthscale.value, 1.0)
+    assert not jnp.allclose(trained_posterior.prior.kernel.lengthscale[...], 1.0)
 
 
 def test_fit_zero_mean_function_not_trained() -> None:
@@ -595,7 +594,7 @@ def test_fit_constant_mean_function_with_parameter() -> None:
     posterior = prior * likelihood
 
     # Record initial mean function constant
-    initial_constant = meanf.constant.value
+    initial_constant = meanf.constant[...]
 
     # Train with default filter (should train the mean function Parameter)
     trained_posterior, _ = fit(
@@ -608,7 +607,7 @@ def test_fit_constant_mean_function_with_parameter() -> None:
     )
 
     # Assert mean function constant has changed (parameter is trainable)
-    final_constant = trained_posterior.prior.mean_function.constant.value
+    final_constant = trained_posterior.prior.mean_function.constant[...]
     assert not jnp.allclose(final_constant, initial_constant)
     # Just verify the parameter changed (direction depends on optimization dynamics)
     assert jnp.isfinite(final_constant)  # Not NaN/Inf
@@ -663,9 +662,9 @@ def test_fit_filter_by_type() -> None:
     posterior = prior * likelihood
 
     # Record initial values
-    initial_variance = kernel.variance.value
-    initial_lengthscale = kernel.lengthscale.value
-    initial_obs_stddev = likelihood.obs_stddev.value
+    initial_variance = kernel.variance[...]
+    initial_lengthscale = kernel.lengthscale[...]
+    initial_obs_stddev = likelihood.obs_stddev[...]
 
     # Train only PositiveReal parameters (should include only lengthscale)
     filter_positive_real = nnx.filterlib.OfType(PositiveReal)
@@ -681,10 +680,10 @@ def test_fit_filter_by_type() -> None:
 
     # Assert that only PositiveReal parameters (lengthscale) have changed
     # variance and obs_stddev are NonNegativeReal, so they should not change
-    assert jnp.allclose(trained_posterior.prior.kernel.variance.value, initial_variance)
+    assert jnp.allclose(trained_posterior.prior.kernel.variance[...], initial_variance)
     assert not jnp.allclose(
-        trained_posterior.prior.kernel.lengthscale.value, initial_lengthscale
+        trained_posterior.prior.kernel.lengthscale[...], initial_lengthscale
     )
     assert jnp.allclose(
-        trained_posterior.likelihood.obs_stddev.value, initial_obs_stddev
+        trained_posterior.likelihood.obs_stddev[...], initial_obs_stddev
     )

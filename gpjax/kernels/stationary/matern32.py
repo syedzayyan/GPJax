@@ -1,4 +1,4 @@
-# Copyright 2022 The JaxGaussianProcesses Contributors. All Rights Reserved.
+# Copyright 2022 The thomaspinder Contributors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -43,11 +43,11 @@ class Matern32(StationaryKernel):
         x: Float[Array, " D"],
         y: Float[Array, " D"],
     ) -> Float[Array, ""]:
-        x = self.slice_input(x) / self.lengthscale.value
-        y = self.slice_input(y) / self.lengthscale.value
+        x = self.slice_input(x) / self.lengthscale[...]
+        y = self.slice_input(y) / self.lengthscale[...]
         tau = euclidean_distance(x, y)
         K = (
-            self.variance.value
+            self.variance[...]
             * (1.0 + jnp.sqrt(3.0) * tau)
             * jnp.exp(-jnp.sqrt(3.0) * tau)
         )

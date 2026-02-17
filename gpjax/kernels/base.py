@@ -1,4 +1,4 @@
-# Copyright 2022 The JaxGaussianProcesses Contributors. All Rights Reserved.
+# Copyright 2022 The thomaspinder Contributors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -123,7 +123,7 @@ class AbstractKernel(nnx.Module):
         """
         return self.compute_engine.gram(self, x)
 
-    def diagonal(self, x: Num[Array, "N D"]) -> Float[Array, " N"]:
+    def diagonal(self, x: Num[Array, "N D"]) -> LinearOperator:
         r"""Compute the diagonal of the gram matrix of the kernel.
 
         Args:
@@ -240,7 +240,7 @@ class Constant(AbstractKernel):
         Returns:
             ScalarFloat: The evaluated kernel function at the supplied inputs.
         """
-        return self.constant.value.squeeze()
+        return self.constant[...].squeeze()
 
 
 class CombinationKernel(AbstractKernel):
@@ -258,7 +258,7 @@ class CombinationKernel(AbstractKernel):
             if not isinstance(kernel, AbstractKernel):
                 raise TypeError("can only combine Kernel instances")  # pragma: no cover
 
-            if isinstance(kernel, self.__class__):
+            if isinstance(kernel, self.__class__) and kernel.operator is operator:
                 kernels_list.extend(kernel.kernels)
             else:
                 kernels_list.append(kernel)
@@ -309,9 +309,12 @@ def _check_dims_compat(
         f" Got {active_dims} active dimensions and {n_dims} input dimensions."
     )
 
-    if isinstance(active_dims, list) and isinstance(n_dims, int):
-        if len(active_dims) != n_dims:
-            raise err
+    if (
+        isinstance(active_dims, list)
+        and isinstance(n_dims, int)
+        and len(active_dims) != n_dims
+    ):
+        raise err
 
     if isinstance(active_dims, slice) and isinstance(n_dims, int):
         start = active_dims.start or 0
@@ -337,3 +340,11 @@ def _check_dims_compat(
 
 SumKernel = ft.partial(CombinationKernel, operator=jnp.sum)
 ProductKernel = ft.partial(CombinationKernel, operator=jnp.prod)
+
+__all__ = [
+    "AbstractKernel",
+    "CombinationKernel",
+    "Constant",
+    "ProductKernel",
+    "SumKernel",
+]

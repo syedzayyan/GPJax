@@ -1,10 +1,4 @@
 from flax import nnx
-import jax
-from jax import config
-import jax.numpy as jnp
-import jax.random as jr
-import pytest
-
 import gpjax as gpx
 from gpjax.dataset import Dataset
 from gpjax.gps import Prior
@@ -17,6 +11,11 @@ from gpjax.objectives import (
     non_conjugate_mll,
 )
 from gpjax.parameters import Parameter
+import jax
+from jax import config
+import jax.numpy as jnp
+import jax.random as jr
+import pytest
 
 # Enable Float64 for more stable matrix inversions.
 config.update("jax_enable_x64", True)
@@ -48,7 +47,7 @@ def build_data(n_points: int, n_dims: int, key, binary: bool):
 @pytest.mark.parametrize("n_dims", [1, 2, 3])
 @pytest.mark.parametrize("key_val", [123, 42])
 def test_conjugate_mll(n_points: int, n_dims: int, key_val: int):
-    key = jr.PRNGKey(key_val)
+    key = jr.key(key_val)
     D = build_data(n_points, n_dims, key, binary=False)
 
     # Build model
@@ -89,7 +88,7 @@ def test_conjugate_mll(n_points: int, n_dims: int, key_val: int):
 @pytest.mark.parametrize("n_dims", [1, 2, 3])
 @pytest.mark.parametrize("key_val", [123, 42])
 def test_conjugate_loocv(n_points, n_dims, key_val):
-    key = jr.PRNGKey(key_val)
+    key = jr.key(key_val)
     D = build_data(n_points, n_dims, key, binary=False)
 
     # Build model
@@ -130,7 +129,7 @@ def test_conjugate_loocv(n_points, n_dims, key_val):
 @pytest.mark.parametrize("n_dims", [1, 2, 3])
 @pytest.mark.parametrize("key_val", [123, 42])
 def test_non_conjugate_mll(n_points, n_dims, key_val):
-    key = jr.PRNGKey(key_val)
+    key = jr.key(key_val)
     D = build_data(n_points, n_dims, key, binary=True)
 
     # Build model
@@ -171,7 +170,7 @@ def test_non_conjugate_mll(n_points, n_dims, key_val):
 @pytest.mark.parametrize("n_dims", [1, 2, 3])
 @pytest.mark.parametrize("key_val", [123, 42])
 def test_collapsed_elbo(n_points, n_dims, key_val):
-    key = jr.PRNGKey(key_val)
+    key = jr.key(key_val)
     D = build_data(n_points, n_dims, key, binary=False)
     z = jr.uniform(key=key, minval=-2.0, maxval=2.0, shape=(n_points // 2, n_dims))
 
@@ -204,7 +203,7 @@ def test_collapsed_elbo(n_points, n_dims, key_val):
 @pytest.mark.parametrize("key_val", [123, 42])
 @pytest.mark.parametrize("binary", [True, False])
 def test_elbo(n_points, n_dims, key_val, binary: bool):
-    key = jr.PRNGKey(key_val)
+    key = jr.key(key_val)
     D = build_data(n_points, n_dims, key, binary=binary)
     z = jr.uniform(key=key, minval=-2.0, maxval=2.0, shape=(n_points // 2, n_dims))
 
@@ -245,3 +244,57 @@ def test_elbo(n_points, n_dims, key_val, binary: bool):
     loss_grad = jax.grad(loss)
     grad_res = loss_grad(state)
     assert isinstance(grad_res, nnx.State)
+
+
+class TestMultiOutputConjugateMLL:
+    @pytest.fixture
+    def mo_setup(self):
+        key = jax.random.PRNGKey(42)
+        N, P = 20, 2
+        X = jnp.linspace(0, 1, N).reshape(-1, 1)
+        y = jnp.column_stack([jnp.sin(X.squeeze()), jnp.cos(X.squeeze())])
+        data = Dataset(X=X, y=y)
+        from gpjax.kernels.multioutput.icm import ICMKernel
+        from gpjax.kernels.stationary import RBF
+        from gpjax.likelihoods import MultiOutputGaussian
+        from gpjax.mean_functions import Zero
+        from gpjax.parameters import CoregionalizationMatrix
+
+        coreg = CoregionalizationMatrix(num_outputs=P, rank=1, key=key)
+        kernel = ICMKernel(base_kernel=RBF(), coregionalization_matrix=coreg)
+        meanf = Zero()
+        prior = Prior(mean_function=meanf, kernel=kernel)
+        lik = MultiOutputGaussian(num_datapoints=N, num_outputs=P)
+        posterior = prior * lik
+        return posterior, data
+
+    def test_mll_returns_scalar(self, mo_setup):
+        posterior, data = mo_setup
+        mll = conjugate_mll(posterior, data)
+        assert mll.shape == ()
+
+    def test_mll_is_finite(self, mo_setup):
+        posterior, data = mo_setup
+        mll = conjugate_mll(posterior, data)
+        assert jnp.isfinite(mll)
+
+    def test_mll_is_negative(self, mo_setup):
+        """Log-likelihood of real data should be finite and typically negative."""
+        posterior, data = mo_setup
+        mll = conjugate_mll(posterior, data)
+        assert mll < 0.0
+
+    def test_single_output_unchanged(self):
+        """Existing single-output path is unaffected."""
+        X = jnp.linspace(0, 1, 20).reshape(-1, 1)
+        y = jnp.sin(X)
+        data = Dataset(X=X, y=y)
+        from gpjax.kernels.stationary import RBF
+        from gpjax.mean_functions import Zero
+
+        kernel = RBF()
+        prior = Prior(mean_function=Zero(), kernel=kernel)
+        lik = Gaussian(num_datapoints=20)
+        posterior = prior * lik
+        mll = conjugate_mll(posterior, data)
+        assert jnp.isfinite(mll)
